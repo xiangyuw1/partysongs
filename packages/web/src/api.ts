@@ -1,0 +1,84 @@
+const API_BASE = '/api';
+
+export interface Song {
+  id: string;
+  source: string;
+  title: string;
+  artist: string;
+  album?: string;
+  imgUrl?: string;
+  duration?: number;
+}
+
+export interface QueueItem {
+  id: number;
+  songId: string;
+  source: string;
+  title: string;
+  artist: string;
+  album: string | null;
+  imgUrl: string | null;
+  userId: string;
+  userName: string | null;
+  status: string;
+  createdAt: string;
+}
+
+export async function searchSongs(q: string, source?: string): Promise<{ songs: Song[] }> {
+  const params = new URLSearchParams({ q });
+  if (source) params.set('source', source);
+  const res = await fetch(`${API_BASE}/search?${params}`);
+  return res.json();
+}
+
+export async function addToQueue(song: Song, userId: string, userName?: string): Promise<QueueItem> {
+  const res = await fetch(`${API_BASE}/queue`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ song, userId, userName }),
+  });
+  return res.json();
+}
+
+export async function getQueue(): Promise<QueueItem[]> {
+  const res = await fetch(`${API_BASE}/queue`);
+  return res.json();
+}
+
+export async function removeFromQueue(id: number): Promise<void> {
+  await fetch(`${API_BASE}/queue/${id}`, { method: 'DELETE' });
+}
+
+export async function getPlayerUrl(song: Song): Promise<string | null> {
+  const res = await fetch(`${API_BASE}/player/url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ song }),
+  });
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data.url ?? null;
+}
+
+export async function notifyEnded(): Promise<Song | null> {
+  const res = await fetch(`${API_BASE}/player/ended`, { method: 'POST' });
+  return res.json();
+}
+
+export async function requestNext(): Promise<{ song: Song; queueItemId?: number } | null> {
+  const res = await fetch(`${API_BASE}/player/request`, { method: 'POST' });
+  return res.json();
+}
+
+// Admin APIs
+export async function adminFetch(path: string, password: string, init?: RequestInit) {
+  const res = await fetch(`${API_BASE}/admin${path}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      'x-admin-password': password,
+      ...(init?.headers || {}),
+    },
+  });
+  return res.json();
+}
