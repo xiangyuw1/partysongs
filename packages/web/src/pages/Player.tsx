@@ -3,6 +3,8 @@ import { Howl } from 'howler';
 import { getPlayerUrl, requestNext, getLyrics, type Song } from '../api';
 import { useWebSocket } from '../hooks/useWebSocket';
 
+const PLAYER_STATE_KEY = 'partysongs_player_state';
+
 function formatTime(sec: number): string {
   if (!isFinite(sec) || sec < 0) return '0:00';
   const m = Math.floor(sec / 60);
@@ -52,6 +54,8 @@ export default function Player() {
   const [seeking, setSeeking] = useState(false);
   const seekValueRef = useRef(0);
   const seekingRef = useRef(false);
+  const currentSongRef = useRef<Song | null>(null);
+  const lastSaveRef = useRef(0);
 
   function fetchLyrics(song: Song) {
     setLyrics([]);
@@ -82,6 +86,16 @@ export default function Player() {
           }
         }
         setActiveLine((prev) => (idx !== prev ? idx : prev));
+        const now = performance.now();
+        if (now - lastSaveRef.current > 1000) {
+          lastSaveRef.current = now;
+          const song = currentSongRef.current;
+          if (song) {
+            try {
+              localStorage.setItem(PLAYER_STATE_KEY, JSON.stringify({ song, position: t }));
+            } catch { /* quota exceeded, ignore */ }
+          }
+        }
       }
       rafRef.current = requestAnimationFrame(tick);
     };
@@ -99,7 +113,7 @@ export default function Player() {
     container.scrollTo({ top: Math.max(0, offset), behavior: 'smooth' });
   }, [activeLine]);
 
-  function playSong(song: Song) {
+  function playSong(song: Song, seekTo?: number) {
     stopCurrent();
     setStatus(`获取播放链接: ${song.title}...`);
     fetchLyrics(song);
@@ -114,7 +128,7 @@ export default function Player() {
       }
 
       setCurrentSong(song);
-      setStatus(`正在播放: ${song.title} - ${song.artist}`);
+      setStatus(seekTo != null ? `继续播放: ${song.title} - ${song.artist}` : `正在播放: ${song.title} - ${song.artist}`);
       retryCountRef.current = 0;
 
       const ext = url.split('?')[0].split('.').pop()?.toLowerCase();
@@ -135,6 +149,9 @@ export default function Player() {
       howlRef.current = howl;
       playingRef.current = true;
       howl.play();
+      if (seekTo != null && seekTo > 0) {
+        howl.seek(seekTo);
+      }
       startProgressSync();
     }).catch((err) => {
       console.error('getPlayerUrl error:', err);
@@ -159,6 +176,7 @@ export default function Player() {
 
   async function handleEnded() {
     stopCurrent();
+    try { localStorage.removeItem(PLAYER_STATE_KEY); } catch { /* ignore */ }
     setStatus('请求下一首...');
     try {
       const next = await requestNext();
@@ -196,6 +214,10 @@ export default function Player() {
   useEffect(() => {
     seekingRef.current = seeking;
   }, [seeking]);
+
+  useEffect(() => {
+    currentSongRef.current = currentSong;
+  }, [currentSong]);
 
   useEffect(() => {
     if (!seeking) return;
@@ -241,14 +263,31 @@ export default function Player() {
 
   function handleStart() {
     setStarted(true);
-    setStatus('请求第一首歌...');
-    requestNext().then((res) => {
-      if (res?.song) {
-        playSong(res.song);
-      } else {
-        setStatus('队列为空，等待点歌...');
+
+    let saved: { song: Song; position: number } | null = null;
+    try {
+      const raw = localStorage.getItem(PLAYER_STATE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.song?.id && parsed?.song?.source && typeof parsed.position === 'number' && parsed.position > 2) {
+          saved = parsed;
+        }
       }
-    });
+    } catch { /* ignore parse errors */ }
+
+    if (saved) {
+      setStatus(`恢复上次播放: ${saved.song.title}...`);
+      playSong(saved.song, saved.position);
+    } else {
+      setStatus('请求第一首歌...');
+      requestNext().then((res) => {
+        if (res?.song) {
+          playSong(res.song);
+        } else {
+          setStatus('队列为空，等待点歌...');
+        }
+      });
+    }
   }
 
   useEffect(() => {
