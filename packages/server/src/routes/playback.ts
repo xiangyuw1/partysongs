@@ -49,11 +49,9 @@ router.post('/url', async (req, res) => {
 router.post('/ended', async (_req, res) => {
   const nextSong = await getNextSong();
   if (nextSong) {
-    broadcast({ type: 'play_song', data: nextSong });
     broadcast({ type: 'queue_update', data: queue.getFullQueue() });
     res.json(nextSong);
   } else {
-    broadcast({ type: 'play_song', data: null });
     broadcast({ type: 'queue_update', data: queue.getFullQueue() });
     res.json(null);
   }
@@ -62,7 +60,6 @@ router.post('/ended', async (_req, res) => {
 router.post('/request', async (_req, res) => {
   const nextSong = await getNextSong();
   if (nextSong) {
-    broadcast({ type: 'play_song', data: nextSong });
     broadcast({ type: 'queue_update', data: queue.getFullQueue() });
     res.json(nextSong);
   } else {
