@@ -60,6 +60,13 @@ This avoids stale closure issues in the player's `useCallback([], [])` WebSocket
 - `playback_state` — volume/mode changes
 - `fallback_update` — fallback playlist changes
 
+## Branches
+
+- `main` — 生产分支。Vite dev server 仅监听 localhost，`crypto.randomUUID()` 正常使用。日常开发在此分支。
+- `debug` — 远程调试分支。Vite 监听 `0.0.0.0:5173`，`getUserId()` 有 `crypto.randomUUID()` fallback（HTTP 非 localhost 环境下 `crypto.randomUUID()` 不可用）。部署到服务器时从此分支拉取。
+
+切换到 debug 分支进行远程开发时注意：`crypto.randomUUID()` 在 HTTP 非安全上下文中不可用，已用 Math.random fallback 替代，生产环境（HTTPS）不受影响。
+
 ## Conventions
 
 - TypeScript strict mode in both packages
