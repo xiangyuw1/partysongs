@@ -6,8 +6,7 @@ import { useWebSocket } from '../hooks/useWebSocket';
 const SOURCE_OPTIONS = [
   { value: 'all', label: '全部' },
   { value: 'netease', label: '网易云' },
-  { value: 'kugou', label: '酷狗' },
-  { value: 'kuwo', label: '酷我' },
+  { value: 'joox', label: 'JOOX' },
 ];
 
 export default function Guest() {

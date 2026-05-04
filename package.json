@@ -1,16 +1,12 @@
 {
   "name": "partysongs",
   "private": true,
-  "workspaces": [
-    "packages/*"
-  ],
   "scripts": {
     "dev": "concurrently -n server,web -c blue,green \"pnpm run dev:server\" \"pnpm run dev:web\"",
-    "dev:server": "npm run dev -w packages/server",
-    "dev:web": "npm run dev -w packages/web",
-    "build": "npm run build --workspaces --if-present",
-    "lint": "npm run lint --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "dev:server": "pnpm --filter @partysongs/server dev",
+    "dev:web": "pnpm --filter @partysongs/web dev",
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck"
   },
   "engines": {
     "node": ">=18"

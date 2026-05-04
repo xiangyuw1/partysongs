@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { searchAll, searchSource } from '../services/music.js';
 import type { MusicSource } from '../types.js';
 
-const router = Router();
+const router: ReturnType<typeof Router> = Router();
 
 router.get('/', async (req, res) => {
   const q = req.query.q as string | undefined;

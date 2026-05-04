@@ -265,8 +265,19 @@ export default function Admin() {
         <div className="space-y-4">
           <div className="bg-slate-800 rounded-lg p-4">
             <h3 className="font-medium mb-2">音源信息</h3>
-            <p className="text-sm text-slate-400">当前使用 GD音乐台 聚合 API，支持网易云、酷狗、酷我等音源。</p>
-            <p className="text-xs text-slate-500 mt-1">数据来源：music.gdstudio.xyz</p>
+            <p className="text-sm text-slate-400">
+              音乐数据由 <a href="https://music.gdstudio.xyz" target="_blank" rel="noopener noreferrer" className="text-purple-400 underline">GD音乐台</a> 聚合 API 提供，
+              当前可用音源：网易云音乐、JOOX。
+            </p>
+            <p className="text-xs text-slate-500 mt-2">
+              数据来源：GD音乐台(music.gdstudio.xyz) — 基于 Meting &amp; MKOnlineMusicPlayer，由 metowolf &amp; mengkun 原创，GD Studio 修改维护。
+            </p>
+            <p className="text-xs text-slate-500 mt-1">
+              本平台仅供学习交流使用，严禁商用。音乐版权归各平台及版权方所有。
+            </p>
+            <p className="text-xs text-slate-500 mt-1">
+              访问限制：5分钟内不超过50次请求
+            </p>
           </div>
           <div>
             <p className="text-sm text-slate-400">管理密码通过环境变量 ADMIN_PASSWORD 设置。</p>

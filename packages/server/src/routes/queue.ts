@@ -4,7 +4,7 @@ import * as queue from '../services/queue.js';
 import { broadcast } from '../services/ws.js';
 import type { Song } from '../types.js';
 
-const router = Router();
+const router: ReturnType<typeof Router> = Router();
 
 router.get('/', (_req, res) => {
   res.json(queue.getFullQueue());

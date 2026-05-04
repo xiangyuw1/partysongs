@@ -3,7 +3,7 @@ import * as q from '../services/queue.js';
 import { broadcast } from '../services/ws.js';
 import type { Song } from '../types.js';
 
-const router = Router();
+const router: ReturnType<typeof Router> = Router();
 
 function checkAdmin(req: any, res: any, next: any) {
   const password = req.headers['x-admin-password'] || req.query.password;

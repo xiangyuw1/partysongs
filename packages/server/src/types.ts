@@ -38,7 +38,7 @@ export interface PlaybackState {
   isPlaying: boolean;
 }
 
-export type MusicSource = 'netease' | 'kugou' | 'kuwo';
+export type MusicSource = 'netease' | 'joox';
 
 export interface SearchResult {
   songs: Song[];
