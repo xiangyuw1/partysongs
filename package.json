@@ -6,6 +6,7 @@
     "dev:server": "pnpm --filter @partysongs/server dev",
     "dev:web": "pnpm --filter @partysongs/web dev",
     "build": "pnpm -r run build",
+    "start": "pnpm --filter @partysongs/server start",
     "typecheck": "pnpm -r run typecheck"
   },
   "engines": {
