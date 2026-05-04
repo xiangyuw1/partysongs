@@ -83,9 +83,10 @@ export default function Player() {
     const container = lyricsContainerRef.current;
     const activeEl = container.children[activeLine] as HTMLElement | undefined;
     if (!activeEl) return;
-    const containerH = container.clientHeight;
-    const offset = activeEl.offsetTop - containerH / 2 + activeEl.clientHeight / 2;
-    container.scrollTo({ top: offset, behavior: 'smooth' });
+    const containerRect = container.getBoundingClientRect();
+    const activeRect = activeEl.getBoundingClientRect();
+    const offset = container.scrollTop + (activeRect.top - containerRect.top) - container.clientHeight / 2 + activeRect.height / 2;
+    container.scrollTo({ top: Math.max(0, offset), behavior: 'smooth' });
   }, [activeLine]);
 
   function playSong(song: Song) {
@@ -229,7 +230,7 @@ export default function Player() {
 
           <div
             ref={lyricsContainerRef}
-            className="w-full max-w-xl h-64 overflow-y-auto scroll-smooth my-4 mask-fade"
+            className="w-full max-w-xl h-64 overflow-y-auto scroll-smooth my-4 scrollbar-hide"
             style={{ maskImage: 'linear-gradient(to bottom, transparent 0%, black 15%, black 85%, transparent 100%)' }}
           >
             {lyrics.length > 0 ? (

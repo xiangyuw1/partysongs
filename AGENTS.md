@@ -21,18 +21,17 @@ No lint or test tooling exists yet.
 
 npm workspaces monorepo with two packages:
 
-- `packages/server` — Express + WebSocket + SQLite backend. Entry: `src/index.ts`. Uses `@meting/core` for multi-platform music search/playback (netease, tencent, kugou, kuwo, baidu) and `NeteaseCloudMusicApi` for Netease direct API. QQ Music uses custom HTTP client in `services/qqmusic.ts`. DB uses `sql.js` (in-memory SQLite with manual file persistence to `partysongs.db` in cwd).
+- `packages/server` — Express + WebSocket + SQLite backend. Entry: `src/index.ts`. All music operations (search, URL, pic, lyrics) go through GD音乐台 API (`music-api.gdstudio.xyz`). DB uses `sql.js` (in-memory SQLite with manual file persistence to `partysongs.db` in cwd).
 - `packages/web` — React + Vite + Tailwind frontend. Three pages: `/guest` (user song requests), `/admin` (queue/fallback management, password-protected), `/player` (howler.js audio player, runs on admin's browser).
 
 ### Key files
 
-- `packages/server/src/services/music.ts` — Multi-source search and URL resolution (Netease, Kugou, QQ)
-- `packages/server/src/services/qqmusic.ts` — QQ Music search/URL via direct HTTP to `u.y.qq.com`. QQ cookie stored in both SQLite `settings` table and `.qq-cookie` file.
+- `packages/server/src/services/music.ts` — Multi-source search and URL resolution via GD音乐台 API (Netease, Joox)
 - `packages/server/src/services/queue.ts` — Queue CRUD, fallback playlists, playback state
 - `packages/server/src/services/ws.ts` — WebSocket broadcast to all clients
 - `packages/server/src/routes/admin.ts` — Admin routes (x-admin-password header auth), exports `getNextSong()` used by playback routes
-- `packages/server/src/declarations.d.ts` — Custom type declarations for `@meting/core` and `NeteaseCloudMusicApi` (no upstream types)
-- `packages/web/src/pages/Player.tsx` — howler.js playback, auto-requests next song on track end
+- `packages/server/src/routes/playback.ts` — Player routes: URL resolution, album art proxy, lyrics proxy (all via GD API)
+- `packages/web/src/pages/Player.tsx` — howler.js playback with scrolling lyrics display, auto-requests next song on track end
 
 ### Music source priority
 

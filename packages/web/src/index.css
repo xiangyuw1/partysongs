@@ -8,3 +8,6 @@ body {
   background: #0f172a;
   color: #e2e8f0;
 }
+
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { scrollbar-width: none; -ms-overflow-style: none; }
