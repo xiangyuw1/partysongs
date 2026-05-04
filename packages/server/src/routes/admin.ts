@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import * as q from '../services/queue.js';
 import { setQqCookie, getQqCookie, hasQqCookie } from '../services/qqmusic.js';
+import { startQrLogin, checkQrLogin } from '../services/qqmusic-login.js';
 import { broadcast } from '../services/ws.js';
 import type { Song } from '../types.js';
 
@@ -34,6 +35,27 @@ router.post('/qq-cookie', (req, res) => {
 router.delete('/qq-cookie', (_req, res) => {
   setQqCookie('');
   res.json({ ok: true, connected: false });
+});
+
+// QQ Music QR code login
+router.post('/qq-login/qr', async (_req, res) => {
+  try {
+    const result = await startQrLogin();
+    res.json(result);
+  } catch (err) {
+    console.error('[Admin] QR login start error:', err);
+    res.status(500).json({ error: 'Failed to start QR login' });
+  }
+});
+
+router.get('/qq-login/qr/:sessionKey', async (req, res) => {
+  try {
+    const result = await checkQrLogin(req.params.sessionKey);
+    res.json(result);
+  } catch (err) {
+    console.error('[Admin] QR login check error:', err);
+    res.status(500).json({ error: 'Failed to check QR login status' });
+  }
 });
 
 // Fallback playlists

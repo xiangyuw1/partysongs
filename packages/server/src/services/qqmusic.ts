@@ -86,6 +86,17 @@ function getHeaders(): Record<string, string> {
   return h;
 }
 
+function computeGtk(): number {
+  // g_tk is hash33 of p_skey, used for QQ Music API auth
+  const m = qqCookieValue.match(/p_skey=([^;]+)/);
+  const skey = m?.[1] || '';
+  let hash = 5381;
+  for (const c of skey) {
+    hash += (hash << 5) + c.charCodeAt(0);
+  }
+  return hash & 0x7fffffff;
+}
+
 export async function searchQq(keyword: string): Promise<SearchResult> {
   try {
     const resp = await fetch(SEARCH_URL, {
@@ -132,7 +143,8 @@ export async function getUrlQq(songMid: string): Promise<string | null> {
   try {
     const guid = String(Math.floor(Math.random() * 1e10));
     const uin = extractUin();
-    console.log('[QQMusic] uin:', uin, 'guid:', guid);
+    const gTk = computeGtk();
+    console.log('[QQMusic] uin:', uin, 'guid:', guid, 'g_tk:', gTk);
 
     const filenames = [
       `M800${songMid}.mp3`,
@@ -146,6 +158,7 @@ export async function getUrlQq(songMid: string): Promise<string | null> {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify({
+        comm: { uin: Number(uin) || 0, format: 'json', ct: 24, cv: 0, g_tk: gTk },
         req_0: {
           module: 'vkey.GetVkeyServer',
           method: 'CgiGetVkey',
@@ -187,11 +200,17 @@ export async function getUrlQq(songMid: string): Promise<string | null> {
 }
 
 export async function getAllUrlsQq(songMid: string): Promise<string[]> {
-  if (!qqCookieValue) return [];
+  if (!qqCookieValue) {
+    console.warn('[QQMusic] getAllUrlsQq: no cookie set');
+    return [];
+  }
 
   try {
     const guid = String(Math.floor(Math.random() * 1e10));
     const uin = extractUin();
+    const gTk = computeGtk();
+    const hasQqmusicKey = /qqmusic_key=([^;]+)/.test(qqCookieValue);
+    console.log('[QQMusic] getAllUrlsQq:', { songMid, uin, guid, gTk, hasQqmusicKey });
 
     const filenames = [
       `M800${songMid}.mp3`,
@@ -205,6 +224,7 @@ export async function getAllUrlsQq(songMid: string): Promise<string[]> {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify({
+        comm: { uin: Number(uin) || 0, format: 'json', ct: 24, cv: 0, g_tk: gTk },
         req_0: {
           module: 'vkey.GetVkeyServer',
           method: 'CgiGetVkey',
@@ -216,21 +236,27 @@ export async function getAllUrlsQq(songMid: string): Promise<string[]> {
     const sip: string[] = data.req_0?.data?.sip ?? [];
     const infos = data.req_0?.data?.midurlinfo ?? [];
 
+    console.log('[QQMusic] getAllUrlsQq sip:', sip.length, 'infos:', infos.length);
     const urls: string[] = [];
     for (const info of infos) {
       if (info.purl) {
         for (const base of sip) {
           urls.push(base + info.purl);
         }
+      } else {
+        console.warn('[QQMusic] getAllUrlsQq: empty purl for', info.filename, 'purl:', JSON.stringify(info.purl));
       }
     }
+    console.log('[QQMusic] getAllUrlsQq: got', urls.length, 'URLs');
     return urls;
-  } catch {
+  } catch (err) {
+    console.error('[QQMusic] getAllUrlsQq error:', err);
     return [];
   }
 }
 
 function extractUin(): string {
-  const m = qqCookieValue.match(/uin=(\d+)/);
+  // QQ cookies: "uin=o012345678" or "uin=012345678" or "p_uin=o012345678"
+  const m = qqCookieValue.match(/(?:uin|p_uin)=o?(\d+)/);
   return m?.[1] ?? '0';
 }

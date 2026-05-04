@@ -23,7 +23,11 @@ router.get('/stream/qq/:songMid', async (req, res) => {
       console.log('[Playback] QQ stream trying:', url.substring(0, 100));
       try {
         const upstream = await fetch(url, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'https://y.qq.com/',
+          },
+          redirect: 'follow',
         });
         if (!upstream.ok) {
           console.log('[Playback] QQ stream upstream:', upstream.status, '-> trying next');
