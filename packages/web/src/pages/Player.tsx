@@ -1,7 +1,14 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, type MouseEvent, type TouchEvent } from 'react';
 import { Howl } from 'howler';
 import { getPlayerUrl, requestNext, getLyrics, type Song } from '../api';
 import { useWebSocket } from '../hooks/useWebSocket';
+
+function formatTime(sec: number): string {
+  if (!isFinite(sec) || sec < 0) return '0:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
 
 interface LyricLine {
   time: number;
@@ -32,6 +39,8 @@ export default function Player() {
   const [started, setStarted] = useState(false);
   const [lyrics, setLyrics] = useState<LyricLine[]>([]);
   const [activeLine, setActiveLine] = useState(-1);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
   const howlRef = useRef<Howl | null>(null);
   const playingRef = useRef(false);
   const retryCountRef = useRef(0);
@@ -39,6 +48,10 @@ export default function Player() {
   const rafRef = useRef<number>(0);
   const lyricsRef = useRef<LyricLine[]>([]);
   const handleEndedRef = useRef<() => void>(() => {});
+  const progressBarRef = useRef<HTMLDivElement>(null);
+  const [seeking, setSeeking] = useState(false);
+  const seekValueRef = useRef(0);
+  const seekingRef = useRef(false);
 
   function fetchLyrics(song: Song) {
     setLyrics([]);
@@ -52,12 +65,14 @@ export default function Player() {
     });
   }
 
-  function startLyricsSync() {
+  function startProgressSync() {
     cancelAnimationFrame(rafRef.current);
     const tick = () => {
       const howl = howlRef.current;
-      if (howl && playingRef.current) {
+      if (howl && playingRef.current && !seekingRef.current) {
         const t = howl.seek() as number;
+        setCurrentTime(t);
+        setDuration(howl.duration());
         const lines = lyricsRef.current;
         let idx = -1;
         for (let i = lines.length - 1; i >= 0; i--) {
@@ -72,12 +87,6 @@ export default function Player() {
     };
     rafRef.current = requestAnimationFrame(tick);
   }
-
-  useEffect(() => {
-    if (lyrics.length > 0 && playingRef.current) {
-      startLyricsSync();
-    }
-  }, [lyrics]);
 
   useEffect(() => {
     if (!lyricsContainerRef.current || activeLine < 0) return;
@@ -126,6 +135,7 @@ export default function Player() {
       howlRef.current = howl;
       playingRef.current = true;
       howl.play();
+      startProgressSync();
     }).catch((err) => {
       console.error('getPlayerUrl error:', err);
       setStatus(`获取链接失败: ${song.title}，跳过`);
@@ -141,6 +151,8 @@ export default function Player() {
       howlRef.current = null;
     }
     playingRef.current = false;
+    setCurrentTime(0);
+    setDuration(0);
     setLyrics([]);
     setActiveLine(-1);
   }
@@ -168,6 +180,57 @@ export default function Player() {
   }
 
   handleEndedRef.current = handleEnded;
+
+  function seekFromEvent(e: MouseEvent<HTMLDivElement> | TouchEvent<HTMLDivElement>) {
+    const bar = progressBarRef.current;
+    const howl = howlRef.current;
+    if (!bar || !howl) return;
+    const rect = bar.getBoundingClientRect();
+    const clientX = 'touches' in e ? e.touches[0]?.clientX ?? e.changedTouches[0]?.clientX : e.clientX;
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const seekTo = ratio * howl.duration();
+    howl.seek(seekTo);
+    setCurrentTime(seekTo);
+  }
+
+  useEffect(() => {
+    seekingRef.current = seeking;
+  }, [seeking]);
+
+  useEffect(() => {
+    if (!seeking) return;
+
+    function handleMove(e: globalThis.MouseEvent | globalThis.TouchEvent) {
+      const bar = progressBarRef.current;
+      const howl = howlRef.current;
+      if (!bar || !howl) return;
+      const rect = bar.getBoundingClientRect();
+      const clientX = 'touches' in e ? (e as globalThis.TouchEvent).touches[0]?.clientX ?? (e as globalThis.TouchEvent).changedTouches[0]?.clientX : (e as globalThis.MouseEvent).clientX;
+      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      const seekTo = ratio * howl.duration();
+      seekValueRef.current = seekTo;
+      setCurrentTime(seekTo);
+    }
+
+    function handleUp() {
+      const howl = howlRef.current;
+      if (howl) {
+        howl.seek(seekValueRef.current);
+      }
+      setSeeking(false);
+    }
+
+    document.addEventListener('mousemove', handleMove);
+    document.addEventListener('mouseup', handleUp);
+    document.addEventListener('touchmove', handleMove, { passive: true });
+    document.addEventListener('touchend', handleUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMove);
+      document.removeEventListener('mouseup', handleUp);
+      document.removeEventListener('touchmove', handleMove);
+      document.removeEventListener('touchend', handleUp);
+    };
+  }, [seeking]);
 
   const handleWs = useCallback((msg: { type: string; data: unknown }) => {
     if (msg.type === 'skip') {
@@ -244,6 +307,39 @@ export default function Player() {
             ) : (
               <p className="text-slate-500 text-base py-4">暂无歌词</p>
             )}
+          </div>
+
+          <div className="w-full max-w-xl mt-2 mb-2 px-4">
+            <div
+              ref={progressBarRef}
+              className="relative w-full h-5 flex items-center cursor-pointer group"
+              onClick={seekFromEvent}
+              onMouseDown={(e) => {
+                seekFromEvent(e);
+                setSeeking(true);
+              }}
+              onTouchStart={(e) => {
+                seekFromEvent(e);
+                setSeeking(true);
+              }}
+            >
+              <div className="relative w-full h-1.5 bg-slate-700/60 rounded-full">
+                <div
+                  className="absolute inset-y-0 left-0 bg-gradient-to-r from-purple-500 to-fuchsia-500 rounded-full"
+                  style={{ width: duration > 0 ? `${(currentTime / duration) * 100}%` : '0%' }}
+                />
+                <div
+                  className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow-md transition-opacity ${
+                    seeking ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                  }`}
+                  style={{ left: duration > 0 ? `calc(${(currentTime / duration) * 100}% - 6px)` : '-6px' }}
+                />
+              </div>
+            </div>
+            <div className="flex justify-between mt-1 text-xs text-slate-500 tabular-nums">
+              <span>{formatTime(currentTime)}</span>
+              <span>{formatTime(duration)}</span>
+            </div>
           </div>
 
           <div className="mt-4 flex items-center gap-2">
