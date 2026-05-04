@@ -17,19 +17,6 @@ export default function Admin() {
   const [fbSongs, setFbSongs] = useState<Song[]>([]);
   const [searching, setSearching] = useState(false);
 
-  // QQ Cookie
-  const [qqCookie, setQqCookie] = useState('');
-  const [qqConnected, setQqConnected] = useState(false);
-
-  // QR Login
-  const [qrImage, setQrImage] = useState('');
-  const [qrSessionKey, setQrSessionKey] = useState('');
-  const [qrStatus, setQrStatus] = useState('');
-  const [qrError, setQrError] = useState('');
-  const [qrLoading, setQrLoading] = useState(false);
-  const [qrNickname, setQrNickname] = useState('');
-  const [qrStep, setQrStep] = useState<'qr' | 'auth' | 'paste'>('qr');
-
   useEffect(() => {
     if (loggedIn) loadData();
   }, [loggedIn]);
@@ -47,14 +34,12 @@ export default function Admin() {
 
   async function loadData() {
     try {
-      const [q, pl, qq] = await Promise.all([
+      const [q, pl] = await Promise.all([
         getQueue(),
         adminFetch('/fallback', password),
-        adminFetch('/qq-cookie', password),
       ]);
       setQueue(q);
       setPlaylists(Array.isArray(pl) ? pl : []);
-      setQqConnected(qq?.connected ?? false);
     } catch {}
   }
 
@@ -114,70 +99,6 @@ export default function Admin() {
     setFbResults([]);
     loadData();
   }
-
-  async function handleSaveQqCookie() {
-    if (!qqCookie.trim()) return;
-    await adminFetch('/qq-cookie', password, {
-      method: 'POST',
-      body: JSON.stringify({ cookie: qqCookie.trim() }),
-    });
-    setQqCookie('');
-    setQqConnected(true);
-    setQrStep('qr');
-    setQrImage('');
-    setQrSessionKey('');
-  }
-
-  async function handleDisconnectQq() {
-    await adminFetch('/qq-cookie', password, { method: 'DELETE' });
-    setQqConnected(false);
-  }
-
-  async function handleStartQrLogin() {
-    setQrLoading(true);
-    setQrError('');
-    setQrStatus('');
-    setQrNickname('');
-    setQrStep('qr');
-    try {
-      const data = await adminFetch('/qq-login/qr', password, { method: 'POST' });
-      if (data?.qrImage && data?.sessionKey) {
-        setQrImage(data.qrImage);
-        setQrSessionKey(data.sessionKey);
-        setQrStatus('pending');
-      } else {
-        setQrError('获取二维码失败');
-      }
-    } catch {
-      setQrError('获取二维码失败');
-    }
-    setQrLoading(false);
-  }
-
-  useEffect(() => {
-    if (!qrSessionKey || !qrStatus || qrStatus === 'expired' || qrStatus === 'failed') return;
-    if (qrStep !== 'qr') return;
-
-    const timer = setInterval(async () => {
-      try {
-        const data = await adminFetch(`/qq-login/qr/${qrSessionKey}`, password);
-        if (data?.status) {
-          setQrStatus(data.status);
-          if (data.nickname) setQrNickname(data.nickname);
-          if (data.error) setQrError(data.error);
-          if (data.status === 'confirmed' && data.redirectUrl) {
-            // QR scan success! Open the redirect URL for browser-side OAuth
-            setQrStep('auth');
-            window.open(data.redirectUrl, '_blank');
-          }
-        }
-      } catch {
-        // ignore polling errors
-      }
-    }, 2000);
-
-    return () => clearInterval(timer);
-  }, [qrSessionKey, qrStatus, qrStep, password]);
 
   if (!loggedIn) {
     return (
@@ -341,111 +262,13 @@ export default function Admin() {
       )}
 
       {tab === 'settings' && (
-        <div className="space-y-6">
-          <div>
-            <h3 className="font-medium mb-2">QQ音乐 VIP 登录</h3>
-            {qqConnected ? (
-              <div className="flex items-center gap-3 bg-green-900/30 border border-green-700 rounded-lg p-3">
-                <span className="text-green-400 text-sm">已连接</span>
-                <button onClick={handleDisconnectQq} className="text-red-400 text-xs hover:text-red-300 ml-auto">
-                  断开连接
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {/* QR Code Login */}
-                <div className="bg-slate-800/50 rounded-lg p-4">
-                  <h4 className="text-sm font-medium mb-2">扫码登录（推荐）</h4>
-
-                  {qrStep === 'qr' && !qrImage && (
-                    <>
-                      <p className="text-xs text-slate-400 mb-3">使用QQ手机版扫码，自动完成登录。</p>
-                      <button onClick={handleStartQrLogin} disabled={qrLoading}
-                        className="w-full bg-purple-600 hover:bg-purple-700 disabled:opacity-50 py-2 rounded-lg text-sm font-medium">
-                        {qrLoading ? '生成二维码...' : '生成登录二维码'}
-                      </button>
-                    </>
-                  )}
-
-                  {qrStep === 'qr' && qrImage && (
-                    <div className="flex flex-col items-center gap-3">
-                      <div className="bg-white p-2 rounded-lg">
-                        <img src={qrImage} alt="QQ登录二维码" className="w-48 h-48" />
-                      </div>
-                      {qrStatus === 'pending' && <p className="text-xs text-slate-400">请使用QQ手机版扫描二维码</p>}
-                      {qrStatus === 'scanned' && <p className="text-xs text-yellow-400">已扫码，请在手机上确认{qrNickname ? ` (${qrNickname})` : ''}</p>}
-                      {qrStatus === 'expired' && (
-                        <div className="text-center">
-                          <p className="text-xs text-red-400 mb-2">二维码已过期</p>
-                          <button onClick={() => { setQrStep('qr'); handleStartQrLogin(); }} className="text-xs text-purple-400 underline">重新获取</button>
-                        </div>
-                      )}
-                      {qrStatus === 'failed' && (
-                        <div className="text-center">
-                          <p className="text-xs text-red-400 mb-2">{qrError || '登录失败'}</p>
-                          <button onClick={() => { setQrStep('qr'); handleStartQrLogin(); }} className="text-xs text-purple-400 underline">重试</button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {qrStep === 'auth' && (
-                    <div className="text-center space-y-3">
-                      <p className="text-xs text-green-400">扫码成功！({qrNickname})</p>
-                      <p className="text-xs text-slate-400">
-                        已在新标签页打开QQ音乐授权页面。<br />
-                        完成授权后，请在QQ音乐页面按 <kbd className="bg-slate-700 px-1 rounded">F12</kbd> 打开控制台，输入：
-                      </p>
-                      <code className="block bg-slate-900 p-2 rounded text-xs text-green-300 select-all">document.cookie</code>
-                      <p className="text-xs text-slate-400">复制输出结果粘贴到下方：</p>
-                      <textarea
-                        placeholder="粘贴从QQ音乐页面复制的Cookie..."
-                        value={qqCookie}
-                        onChange={(e) => setQqCookie(e.target.value)}
-                        rows={3}
-                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-xs font-mono"
-                      />
-                      <button onClick={handleSaveQqCookie} disabled={!qqCookie.trim()}
-                        className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-50 py-2 rounded-lg text-sm font-medium">
-                        连接QQ音乐
-                      </button>
-                      <button onClick={() => { setQrStep('qr'); setQrImage(''); setQrSessionKey(''); setQqCookie(''); }}
-                        className="text-xs text-slate-500 hover:text-slate-400">取消</button>
-                    </div>
-                  )}
-                </div>
-
-                {/* Manual Cookie Paste (fallback) */}
-                <details className="group">
-                  <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-400">
-                    手动粘贴Cookie（备用方式）
-                  </summary>
-                  <div className="mt-2">
-                    <p className="text-xs text-slate-400 mb-2">
-                      浏览器打开 <a href="https://y.qq.com" target="_blank" className="text-purple-400 underline">y.qq.com</a> 并登录
-                      → F12 → Console → 输入 <code className="bg-slate-800 px-1">document.cookie</code> → 复制粘贴
-                    </p>
-                    <textarea
-                      placeholder="粘贴QQ音乐Cookie..."
-                      value={qqCookie}
-                      onChange={(e) => setQqCookie(e.target.value)}
-                      rows={3}
-                      className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-sm mb-2 font-mono text-xs"
-                    />
-                    <button
-                      onClick={handleSaveQqCookie}
-                      disabled={!qqCookie.trim()}
-                      className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-50 py-2 rounded-lg text-sm font-medium"
-                    >
-                      连接QQ音乐
-                    </button>
-                  </div>
-                </details>
-              </div>
-            )}
+        <div className="space-y-4">
+          <div className="bg-slate-800 rounded-lg p-4">
+            <h3 className="font-medium mb-2">音源信息</h3>
+            <p className="text-sm text-slate-400">当前使用 GD音乐台 聚合 API，支持网易云、酷狗、酷我等音源。</p>
+            <p className="text-xs text-slate-500 mt-1">数据来源：music.gdstudio.xyz</p>
           </div>
-
-          <div className="border-t border-slate-700 pt-4">
+          <div>
             <p className="text-sm text-slate-400">管理密码通过环境变量 ADMIN_PASSWORD 设置。</p>
             <p className="mt-2 text-sm text-slate-400">播放端打开 <code className="bg-slate-800 px-1 rounded">/player</code> 页面即可。</p>
           </div>

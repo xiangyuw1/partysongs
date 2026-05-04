@@ -7,7 +7,6 @@ import express from 'express';
 import cors from 'cors';
 import { createServer } from 'node:http';
 import { initDb } from './db/index.js';
-import { initCookie } from './services/qqmusic.js';
 import { initWs } from './services/ws.js';
 import searchRoutes from './routes/search.js';
 import queueRoutes from './routes/queue.js';
@@ -18,7 +17,6 @@ const PORT = Number(process.env.PORT) || 3000;
 
 async function main() {
   await initDb();
-  initCookie();
 
   const app = express();
   const server = createServer(app);

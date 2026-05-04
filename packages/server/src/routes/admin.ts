@@ -1,7 +1,5 @@
 import { Router } from 'express';
 import * as q from '../services/queue.js';
-import { setQqCookie, getQqCookie, hasQqCookie } from '../services/qqmusic.js';
-import { startQrLogin, checkQrLogin } from '../services/qqmusic-login.js';
 import { broadcast } from '../services/ws.js';
 import type { Song } from '../types.js';
 
@@ -17,46 +15,6 @@ function checkAdmin(req: any, res: any, next: any) {
 }
 
 router.use(checkAdmin);
-
-// QQ Music cookie login
-router.get('/qq-cookie', (_req, res) => {
-  res.json({ connected: hasQqCookie() });
-});
-
-router.post('/qq-cookie', (req, res) => {
-  console.log('[Admin] POST /qq-cookie received');
-  const { cookie } = req.body as { cookie: string };
-  console.log('[Admin] Cookie in body:', cookie ? `length ${cookie.length}` : 'MISSING');
-  if (!cookie) return res.status(400).json({ error: '缺少 cookie' });
-  setQqCookie(cookie);
-  res.json({ ok: true, connected: true });
-});
-
-router.delete('/qq-cookie', (_req, res) => {
-  setQqCookie('');
-  res.json({ ok: true, connected: false });
-});
-
-// QQ Music QR code login
-router.post('/qq-login/qr', async (_req, res) => {
-  try {
-    const result = await startQrLogin();
-    res.json(result);
-  } catch (err) {
-    console.error('[Admin] QR login start error:', err);
-    res.status(500).json({ error: 'Failed to start QR login' });
-  }
-});
-
-router.get('/qq-login/qr/:sessionKey', async (req, res) => {
-  try {
-    const result = await checkQrLogin(req.params.sessionKey);
-    res.json(result);
-  } catch (err) {
-    console.error('[Admin] QR login check error:', err);
-    res.status(500).json({ error: 'Failed to check QR login status' });
-  }
-});
 
 // Fallback playlists
 router.get('/fallback', (_req, res) => {
