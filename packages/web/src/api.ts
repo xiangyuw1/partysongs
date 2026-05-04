@@ -92,5 +92,9 @@ export async function adminFetch(path: string, password: string, init?: RequestI
       ...(init?.headers || {}),
     },
   });
-  return res.json();
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || `请求失败 (${res.status})`);
+  }
+  return data;
 }

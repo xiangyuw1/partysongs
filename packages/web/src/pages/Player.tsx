@@ -38,6 +38,7 @@ export default function Player() {
   const lyricsContainerRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number>(0);
   const lyricsRef = useRef<LyricLine[]>([]);
+  const handleEndedRef = useRef<() => void>(() => {});
 
   function fetchLyrics(song: Song) {
     setLyrics([]);
@@ -166,17 +167,11 @@ export default function Player() {
     }
   }
 
+  handleEndedRef.current = handleEnded;
+
   const handleWs = useCallback((msg: { type: string; data: unknown }) => {
-    if (msg.type === 'play_song') {
-      const data = msg.data as { song: Song } | null;
-      if (data?.song) {
-        retryCountRef.current = 0;
-        playSong(data.song);
-      } else {
-        stopCurrent();
-        setCurrentSong(null);
-        setStatus('等待点歌...');
-      }
+    if (msg.type === 'skip') {
+      handleEndedRef.current();
     }
   }, []);
   useWebSocket(handleWs);

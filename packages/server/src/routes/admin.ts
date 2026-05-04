@@ -8,7 +8,6 @@ const router: ReturnType<typeof Router> = Router();
 function checkAdmin(req: any, res: any, next: any) {
   const password = req.headers['x-admin-password'] || req.query.password;
   if (password !== process.env.ADMIN_PASSWORD) {
-    console.log('[Admin] Auth failed. Got:', password, 'Expected:', process.env.ADMIN_PASSWORD);
     return res.status(401).json({ error: '管理密码错误' });
   }
   next();
@@ -46,7 +45,7 @@ router.delete('/fallback/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// Playback control
+// Playback control — skip current, let player fetch next via its own requestNext()
 router.post('/skip', (_req, res) => {
   const state = q.getPlaybackState();
   if (state.currentQueueItemId) {
@@ -54,19 +53,19 @@ router.post('/skip', (_req, res) => {
     q.updatePlaybackState({ currentQueueItemId: null });
   }
   broadcast({ type: 'queue_update', data: q.getFullQueue() });
-  broadcast({ type: 'play_song', data: null });
+  broadcast({ type: 'skip', data: null });
   res.json({ ok: true });
 });
 
-router.post('/next', async (_req, res) => {
-  const nextSong = await getNextSong();
-  if (nextSong) {
-    broadcast({ type: 'play_song', data: nextSong });
-    res.json(nextSong);
-  } else {
-    broadcast({ type: 'play_song', data: null });
-    res.json(null);
+router.post('/next', (_req, res) => {
+  const state = q.getPlaybackState();
+  if (state.currentQueueItemId) {
+    q.markDone(state.currentQueueItemId);
+    q.updatePlaybackState({ currentQueueItemId: null });
   }
+  broadcast({ type: 'queue_update', data: q.getFullQueue() });
+  broadcast({ type: 'skip', data: null });
+  res.json({ ok: true });
 });
 
 router.post('/volume', (req, res) => {

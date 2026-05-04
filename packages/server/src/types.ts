@@ -46,6 +46,6 @@ export interface SearchResult {
 }
 
 export interface WsMessage {
-  type: 'queue_update' | 'play_song' | 'playback_state' | 'fallback_update';
+  type: 'queue_update' | 'playback_state' | 'fallback_update' | 'skip';
   data: unknown;
 }

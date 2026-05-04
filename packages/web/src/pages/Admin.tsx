@@ -6,6 +6,7 @@ import { useWebSocket } from '../hooks/useWebSocket';
 export default function Admin() {
   const [password, setPassword] = useState(getAdminPassword());
   const [loggedIn, setLoggedIn] = useState(!!getAdminPassword());
+  const [loginError, setLoginError] = useState('');
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [playlists, setPlaylists] = useState<any[]>([]);
   const [tab, setTab] = useState<'queue' | 'fallback' | 'settings'>('queue');
@@ -27,9 +28,15 @@ export default function Admin() {
   }, []);
   useWebSocket(handleWs);
 
-  function handleLogin() {
-    setAdminPassword(password);
-    setLoggedIn(true);
+  async function handleLogin() {
+    setLoginError('');
+    try {
+      await adminFetch('/state', password);
+      setAdminPassword(password);
+      setLoggedIn(true);
+    } catch (e: any) {
+      setLoginError(e.message || '密码错误');
+    }
   }
 
   async function loadData() {
@@ -40,15 +47,16 @@ export default function Admin() {
       ]);
       setQueue(q);
       setPlaylists(Array.isArray(pl) ? pl : []);
-    } catch {}
+    } catch (e: any) {
+      if (e.message?.includes('密码')) {
+        setLoggedIn(false);
+        setLoginError(e.message);
+      }
+    }
   }
 
   async function handleSkip(id: number) {
     await removeFromQueue(id);
-  }
-
-  async function handleSkipCurrent() {
-    await adminFetch('/skip', password, { method: 'POST' });
   }
 
   async function handleNext() {
@@ -108,10 +116,13 @@ export default function Admin() {
           type="password"
           placeholder="输入管理密码"
           value={password}
-          onChange={(e) => setPassword(e.target.value)}
+          onChange={(e) => { setPassword(e.target.value); setLoginError(''); }}
           onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
           className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 mb-3"
         />
+        {loginError && (
+          <p className="text-red-400 text-sm mb-3">{loginError}</p>
+        )}
         <button onClick={handleLogin} className="w-full bg-purple-600 hover:bg-purple-700 py-2 rounded-lg font-medium">
           登录
         </button>
@@ -136,11 +147,8 @@ export default function Admin() {
       {tab === 'queue' && (
         <div>
           <div className="flex gap-2 mb-4">
-            <button onClick={handleSkipCurrent} className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg text-sm">
-              跳过当前
-            </button>
             <button onClick={handleNext} className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm">
-              播放下一首
+              下一首
             </button>
           </div>
           <div className="space-y-1">
