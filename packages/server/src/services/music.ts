@@ -1,8 +1,16 @@
 import type { Song, SearchResult, MusicSource } from '../types.js';
+import { searchQq, getUrlQq } from './qqmusic.js';
 
-const SOURCE_LIST: MusicSource[] = ['netease', 'tencent', 'kugou', 'kuwo', 'baidu'];
-
+let ncmApi: any = null;
 let Meting: any = null;
+
+async function getNcmApi() {
+  if (!ncmApi) {
+    const mod = await import('NeteaseCloudMusicApi');
+    ncmApi = mod.default ?? mod;
+  }
+  return ncmApi;
+}
 
 async function getMeting() {
   if (!Meting) {
@@ -12,19 +20,19 @@ async function getMeting() {
   return Meting;
 }
 
-function mapSource(source: MusicSource): string {
-  const map: Record<MusicSource, string> = {
-    netease: 'netease',
-    tencent: 'tencent',
-    kugou: 'kugou',
-    kuwo: 'kuwo',
-    baidu: 'baidu',
-    migu: 'netease',
+function normalizeNcmSong(raw: any): Song {
+  return {
+    id: String(raw.id),
+    source: 'netease',
+    title: raw.name ?? '',
+    artist: (raw.ar ?? []).map((a: any) => a.name).join(' / '),
+    album: raw.al?.name ?? undefined,
+    imgUrl: raw.al?.picUrl ?? undefined,
+    duration: raw.dt ? Math.round(raw.dt / 1000) : undefined,
   };
-  return map[source] ?? 'netease';
 }
 
-function normalizeSong(raw: any, source: MusicSource): Song {
+function normalizeMetingSong(raw: any, source: MusicSource): Song {
   let artistStr: string;
   if (Array.isArray(raw.artist)) {
     artistStr = raw.artist.join(' / ');
@@ -40,96 +48,106 @@ function normalizeSong(raw: any, source: MusicSource): Song {
     id: String(raw.id),
     source,
     title: raw.name ?? raw.title ?? '',
- artist: artistStr,
+    artist: artistStr,
     album: raw.album ?? undefined,
-    imgUrl: raw.pic ?? raw.pic_id ? `https://p1.music.126.net/${raw.pic_id}/${raw.pic_id}.jpg` : undefined,
     duration: raw.duration ?? raw.dt ? Math.round((raw.duration ?? raw.dt) / 1000) : undefined,
   };
 }
 
+async function searchNetease(keyword: string): Promise<SearchResult> {
+  try {
+    const api = await getNcmApi();
+    const res = await api.cloudsearch({ keywords: keyword, limit: 20 });
+    const songs = (res.body?.result?.songs ?? []).map(normalizeNcmSong);
+    return { songs, total: songs.length };
+  } catch (err) {
+    console.error('[Music] Netease search error:', err);
+    return { songs: [], total: 0 };
+  }
+}
+
+async function searchKugou(keyword: string): Promise<SearchResult> {
+  try {
+    const MetingCls = await getMeting();
+    const client = new MetingCls('kugou');
+    client.format(true);
+
+    const raw = await client.search(keyword, { limit: 20 });
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const songs: Song[] = (Array.isArray(parsed) ? parsed : []).map((s: any) => normalizeMetingSong(s, 'kugou'));
+
+    const picResults = await Promise.allSettled(
+      songs.map(async (s) => {
+        const picRaw = await client.pic(s.id);
+        const picParsed = typeof picRaw === 'string' ? JSON.parse(picRaw) : picRaw;
+        return picParsed?.url as string | undefined;
+      })
+    );
+    for (let i = 0; i < songs.length; i++) {
+      const r = picResults[i];
+      if (r.status === 'fulfilled' && r.value) {
+        songs[i].imgUrl = r.value;
+      }
+    }
+
+    return { songs, total: songs.length };
+  } catch (err) {
+    console.error('[Music] Kugou search error:', err);
+    return { songs: [], total: 0 };
+  }
+}
+
 export async function searchAll(keyword: string): Promise<SearchResult> {
-  const results = await Promise.allSettled(
-    SOURCE_LIST.map((s) => searchSource(keyword, s))
-  );
+  const [netease, kugou, qq] = await Promise.allSettled([
+    searchNetease(keyword),
+    searchKugou(keyword),
+    searchQq(keyword),
+  ]);
 
   const songs: Song[] = [];
-  for (const r of results) {
-    if (r.status === 'fulfilled') {
-      songs.push(...r.value.songs);
-    }
-  }
+  if (qq.status === 'fulfilled') songs.push(...qq.value.songs);
+  if (netease.status === 'fulfilled') songs.push(...netease.value.songs);
+  if (kugou.status === 'fulfilled') songs.push(...kugou.value.songs);
 
   return { songs, total: songs.length };
 }
 
 export async function searchSource(keyword: string, source: MusicSource): Promise<SearchResult> {
-  if (source === 'migu') {
-    return searchMigu(keyword);
-  }
-
-  const MetingCls = await getMeting();
-  const client = new MetingCls(mapSource(source));
-  client.format(true);
-
-  try {
-    const raw = await client.search(keyword, { limit: 20 });
-    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    const songs = (Array.isArray(parsed) ? parsed : []).map((s: any) => normalizeSong(s, source));
-    return { songs, total: songs.length };
-  } catch {
-    return { songs: [], total: 0 };
-  }
-}
-
-async function searchMigu(keyword: string): Promise<SearchResult> {
-  try {
-    const miguMod = await import('migu-music-api');
-    const migu = miguMod.default ?? miguMod;
-    const res = await migu('search', { keyword });
-    if (!res?.songs?.list) return { songs: [], total: 0 };
-
-    const songs: Song[] = res.songs.list.map((item: any) => ({
-      id: String(item.copyrightId ?? item.id),
-      source: 'migu' as MusicSource,
-      title: item.name ?? item.songName ?? '',
-      artist: (item.artists ?? []).map((a: any) => a.name).join(' / '),
-      album: item.album?.name ?? item.albumName,
-      imgUrl: item.album?.picUrl ?? item.picUrl,
-      duration: item.duration,
-    }));
-    return { songs, total: songs.length };
-  } catch {
-    return { songs: [], total: 0 };
-  }
+  if (source === 'kugou') return searchKugou(keyword);
+  if (source === 'qq') return searchQq(keyword);
+  return searchNetease(keyword);
 }
 
 export async function getUrl(song: Song): Promise<string | null> {
-  if (song.source === 'migu') {
-    return getMiguUrl(song.id);
-  }
-
-  const MetingCls = await getMeting();
-  const client = new MetingCls(mapSource(song.source));
-
   try {
-    const raw = await client.url(song.id);
-    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    if (Array.isArray(parsed)) {
-      return parsed[0]?.url ?? null;
+    if (song.source === 'qq') {
+      const url = await getUrlQq(song.id);
+      if (!url) console.warn('[Music] QQ URL null for:', song.title, song.id);
+      return url;
     }
-    return parsed?.url ?? null;
-  } catch {
-    return null;
-  }
-}
 
-async function getMiguUrl(songId: string): Promise<string | null> {
-  try {
-    const miguMod = await import('migu-music-api');
-    const migu = miguMod.default ?? miguMod;
-    const res = await migu('song', { id: songId });
-    return res?.url ?? null;
-  } catch {
+    if (song.source === 'netease') {
+      const api = await getNcmApi();
+      const res = await api.song_url({ id: song.id });
+      const url = res.body?.data?.[0]?.url ?? null;
+      if (!url) console.warn('[Music] Netease URL null for:', song.title, song.id);
+      return url;
+    }
+
+    if (song.source === 'kugou') {
+      const MetingCls = await getMeting();
+      const client = new MetingCls('kugou');
+      client.format(true);
+      const raw = await client.url(song.id);
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      const url = parsed?.url ?? null;
+      if (!url) console.warn('[Music] Kugou URL null for:', song.title, song.id);
+      return url || null;
+    }
+
+    return null;
+  } catch (err) {
+    console.error('[Music] getUrl error for', song.title, song.source, err);
     return null;
   }
 }

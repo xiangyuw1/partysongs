@@ -16,7 +16,10 @@ declare module '@meting/core' {
   export default Meting;
 }
 
-declare module 'migu-music-api' {
-  function migu(action: string, params?: Record<string, any>): Promise<any>;
-  export default migu;
+declare module 'NeteaseCloudMusicApi' {
+  function api(method: string, params?: Record<string, any>): Promise<any>;
+  export const cloudsearch: (params: Record<string, any>) => Promise<any>;
+  export const song_url: (params: Record<string, any>) => Promise<any>;
+  export const song_url_v1: (params: Record<string, any>) => Promise<any>;
+  export default api;
 }

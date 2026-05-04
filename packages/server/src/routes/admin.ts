@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import * as q from '../services/queue.js';
+import { setQqCookie, getQqCookie, hasQqCookie } from '../services/qqmusic.js';
 import { broadcast } from '../services/ws.js';
 import type { Song } from '../types.js';
 
@@ -8,12 +9,32 @@ const router = Router();
 function checkAdmin(req: any, res: any, next: any) {
   const password = req.headers['x-admin-password'] || req.query.password;
   if (password !== process.env.ADMIN_PASSWORD) {
+    console.log('[Admin] Auth failed. Got:', password, 'Expected:', process.env.ADMIN_PASSWORD);
     return res.status(401).json({ error: '管理密码错误' });
   }
   next();
 }
 
 router.use(checkAdmin);
+
+// QQ Music cookie login
+router.get('/qq-cookie', (_req, res) => {
+  res.json({ connected: hasQqCookie() });
+});
+
+router.post('/qq-cookie', (req, res) => {
+  console.log('[Admin] POST /qq-cookie received');
+  const { cookie } = req.body as { cookie: string };
+  console.log('[Admin] Cookie in body:', cookie ? `length ${cookie.length}` : 'MISSING');
+  if (!cookie) return res.status(400).json({ error: '缺少 cookie' });
+  setQqCookie(cookie);
+  res.json({ ok: true, connected: true });
+});
+
+router.delete('/qq-cookie', (_req, res) => {
+  setQqCookie('');
+  res.json({ ok: true, connected: false });
+});
 
 // Fallback playlists
 router.get('/fallback', (_req, res) => {

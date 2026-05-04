@@ -31,5 +31,10 @@ CREATE TABLE IF NOT EXISTS playback_state (
   is_playing INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 INSERT OR IGNORE INTO playback_state (id) VALUES (1);
 `;

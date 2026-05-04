@@ -17,6 +17,10 @@ export default function Admin() {
   const [fbSongs, setFbSongs] = useState<Song[]>([]);
   const [searching, setSearching] = useState(false);
 
+  // QQ Cookie
+  const [qqCookie, setQqCookie] = useState('');
+  const [qqConnected, setQqConnected] = useState(false);
+
   useEffect(() => {
     if (loggedIn) loadData();
   }, [loggedIn]);
@@ -34,12 +38,14 @@ export default function Admin() {
 
   async function loadData() {
     try {
-      const [q, pl] = await Promise.all([
+      const [q, pl, qq] = await Promise.all([
         getQueue(),
         adminFetch('/fallback', password),
+        adminFetch('/qq-cookie', password),
       ]);
       setQueue(q);
       setPlaylists(Array.isArray(pl) ? pl : []);
+      setQqConnected(qq?.connected ?? false);
     } catch {}
   }
 
@@ -98,6 +104,21 @@ export default function Admin() {
     setFbQuery('');
     setFbResults([]);
     loadData();
+  }
+
+  async function handleSaveQqCookie() {
+    if (!qqCookie.trim()) return;
+    await adminFetch('/qq-cookie', password, {
+      method: 'POST',
+      body: JSON.stringify({ cookie: qqCookie.trim() }),
+    });
+    setQqCookie('');
+    setQqConnected(true);
+  }
+
+  async function handleDisconnectQq() {
+    await adminFetch('/qq-cookie', password, { method: 'DELETE' });
+    setQqConnected(false);
   }
 
   if (!loggedIn) {
@@ -262,9 +283,45 @@ export default function Admin() {
       )}
 
       {tab === 'settings' && (
-        <div className="text-sm text-slate-400">
-          <p>管理密码通过环境变量 ADMIN_PASSWORD 设置。</p>
-          <p className="mt-2">播放端打开 <code className="bg-slate-800 px-1 rounded">/player</code> 页面即可。</p>
+        <div className="space-y-6">
+          <div>
+            <h3 className="font-medium mb-2">QQ音乐 VIP 登录</h3>
+            <p className="text-xs text-slate-400 mb-3">
+              获取方式：浏览器打开 <a href="https://y.qq.com" target="_blank" className="text-purple-400 underline">y.qq.com</a> 并登录QQ账号
+              → 按 F12 打开开发者工具 → 切到 Console（控制台）→ 输入 <code className="bg-slate-800 px-1">document.cookie</code> 回车
+              → 复制输出的整段文字粘贴到下面
+            </p>
+            {qqConnected ? (
+              <div className="flex items-center gap-3 bg-green-900/30 border border-green-700 rounded-lg p-3">
+                <span className="text-green-400 text-sm">已连接</span>
+                <button onClick={handleDisconnectQq} className="text-red-400 text-xs hover:text-red-300 ml-auto">
+                  断开连接
+                </button>
+              </div>
+            ) : (
+              <div>
+                <textarea
+                  placeholder="粘贴QQ音乐Cookie..."
+                  value={qqCookie}
+                  onChange={(e) => setQqCookie(e.target.value)}
+                  rows={3}
+                  className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-sm mb-2 font-mono text-xs"
+                />
+                <button
+                  onClick={handleSaveQqCookie}
+                  disabled={!qqCookie.trim()}
+                  className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-50 py-2 rounded-lg text-sm font-medium"
+                >
+                  连接QQ音乐
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="border-t border-slate-700 pt-4">
+            <p className="text-sm text-slate-400">管理密码通过环境变量 ADMIN_PASSWORD 设置。</p>
+            <p className="mt-2 text-sm text-slate-400">播放端打开 <code className="bg-slate-800 px-1 rounded">/player</code> 页面即可。</p>
+          </div>
         </div>
       )}
     </div>

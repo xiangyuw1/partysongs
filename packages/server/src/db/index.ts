@@ -35,7 +35,7 @@ class DatabaseWrapper {
   }
 
   exec(sql: string): void {
-    this.db.run(sql);
+    this.db.exec(sql);
     this.save();
   }
 
@@ -105,7 +105,13 @@ export async function initDb(): Promise<DatabaseWrapper> {
   db = new DatabaseWrapper(sqlDb, DB_PATH);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
-  db.exec(schema);
+
+  // Run each CREATE TABLE individually to avoid multi-statement issues with sql.js
+  const stmts = schema.split(';').map(s => s.trim()).filter(s => s.length > 0);
+  for (const stmt of stmts) {
+    db.exec(stmt + ';');
+  }
+
   return db;
 }
 
