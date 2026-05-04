@@ -27,6 +27,23 @@ router.get('/pic/:source/:picId', async (req, res) => {
   }
 });
 
+router.get('/lyrics', async (req, res) => {
+  const { source, id } = req.query as { source?: string; id?: string };
+  if (!source || !id) return res.status(400).json({ error: '缺少 source 或 id' });
+  try {
+    const apiUrl = `${GD_API}?types=lyric&source=${source}&id=${id}`;
+    const resp = await fetch(apiUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+    });
+    if (!resp.ok) return res.status(502).json({ error: 'lyric api error' });
+    const data = await resp.json() as { lyric?: string; tlyric?: string };
+    res.json({ lyric: data.lyric || '', tlyric: data.tlyric || '' });
+  } catch (err) {
+    console.error('[Playback] lyrics error:', err);
+    res.status(502).json({ error: 'lyrics proxy error' });
+  }
+});
+
 router.post('/url', async (req, res) => {
   const { song } = req.body as { song: Song };
   if (!song) return res.status(400).json({ error: '缺少 song' });

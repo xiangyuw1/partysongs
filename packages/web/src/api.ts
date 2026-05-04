@@ -65,6 +65,18 @@ export async function notifyEnded(): Promise<Song | null> {
   return res.json();
 }
 
+export interface LyricsData {
+  lyric: string;
+  tlyric: string;
+}
+
+export async function getLyrics(source: string, id: string): Promise<LyricsData | null> {
+  const params = new URLSearchParams({ source, id });
+  const res = await fetch(`${API_BASE}/player/lyrics?${params}`);
+  if (!res.ok) return null;
+  return res.json();
+}
+
 export async function requestNext(): Promise<{ song: Song; queueItemId?: number } | null> {
   const res = await fetch(`${API_BASE}/player/request`, { method: 'POST' });
   return res.json();
