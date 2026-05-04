@@ -13,8 +13,6 @@ export default function App() {
           </Link>
           <div className="flex gap-4 text-sm">
             <Link to="/guest" className="text-slate-300 hover:text-white">点歌</Link>
-            <Link to="/admin" className="text-slate-300 hover:text-white">管理</Link>
-            <Link to="/player" className="text-slate-300 hover:text-white">播放</Link>
           </div>
         </nav>
         <Routes>
