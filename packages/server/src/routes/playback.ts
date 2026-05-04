@@ -63,6 +63,12 @@ router.post('/url', async (req, res) => {
   }
 });
 
+router.post('/position', (req, res) => {
+  const { position, duration, song, isPaused } = req.body;
+  broadcast({ type: 'playback_position', data: { position, duration, song, isPaused } });
+  res.json({ ok: true });
+});
+
 router.post('/ended', async (_req, res) => {
   const nextSong = await getNextSong();
   if (nextSong) {

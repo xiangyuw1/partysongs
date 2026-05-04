@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, type MouseEvent, type TouchEvent } from 'react';
 import { Howl } from 'howler';
-import { getPlayerUrl, requestNext, getLyrics, type Song } from '../api';
+import { getPlayerUrl, requestNext, getLyrics, sendPlaybackPosition, type Song } from '../api';
 import { useWebSocket } from '../hooks/useWebSocket';
 
 const PLAYER_STATE_KEY = 'partysongs_player_state';
@@ -43,6 +43,7 @@ export default function Player() {
   const [activeLine, setActiveLine] = useState(-1);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [paused, setPaused] = useState(false);
   const howlRef = useRef<Howl | null>(null);
   const playingRef = useRef(false);
   const retryCountRef = useRef(0);
@@ -56,6 +57,11 @@ export default function Player() {
   const seekingRef = useRef(false);
   const currentSongRef = useRef<Song | null>(null);
   const lastSaveRef = useRef(0);
+  const pausedRef = useRef(false);
+  const lastBroadcastRef = useRef(0);
+  const togglePauseRef = useRef<() => void>(() => {});
+  const startedRef = useRef(false);
+  const reportPositionRef = useRef<() => void>(() => {});
 
   function fetchLyrics(song: Song) {
     setLyrics([]);
@@ -73,19 +79,21 @@ export default function Player() {
     cancelAnimationFrame(rafRef.current);
     const tick = () => {
       const howl = howlRef.current;
-      if (howl && playingRef.current && !seekingRef.current) {
+      if (howl && (playingRef.current || pausedRef.current) && !seekingRef.current) {
         const t = howl.seek() as number;
         setCurrentTime(t);
         setDuration(howl.duration());
-        const lines = lyricsRef.current;
-        let idx = -1;
-        for (let i = lines.length - 1; i >= 0; i--) {
-          if (t >= lines[i].time) {
-            idx = i;
-            break;
+        if (playingRef.current) {
+          const lines = lyricsRef.current;
+          let idx = -1;
+          for (let i = lines.length - 1; i >= 0; i--) {
+            if (t >= lines[i].time) {
+              idx = i;
+              break;
+            }
           }
+          setActiveLine((prev) => (idx !== prev ? idx : prev));
         }
-        setActiveLine((prev) => (idx !== prev ? idx : prev));
         const now = performance.now();
         if (now - lastSaveRef.current > 1000) {
           lastSaveRef.current = now;
@@ -95,6 +103,15 @@ export default function Player() {
               localStorage.setItem(PLAYER_STATE_KEY, JSON.stringify({ song, position: t }));
             } catch { /* quota exceeded, ignore */ }
           }
+        }
+        if (now - lastBroadcastRef.current > 1000) {
+          lastBroadcastRef.current = now;
+          sendPlaybackPosition({
+            position: t,
+            duration: howl.duration(),
+            song: currentSongRef.current,
+            isPaused: pausedRef.current,
+          });
         }
       }
       rafRef.current = requestAnimationFrame(tick);
@@ -148,6 +165,7 @@ export default function Player() {
 
       howlRef.current = howl;
       playingRef.current = true;
+      pausedRef.current = false;
       howl.play();
       if (seekTo != null && seekTo > 0) {
         howl.seek(seekTo);
@@ -168,10 +186,36 @@ export default function Player() {
       howlRef.current = null;
     }
     playingRef.current = false;
+    pausedRef.current = false;
+    setPaused(false);
     setCurrentTime(0);
     setDuration(0);
     setLyrics([]);
     setActiveLine(-1);
+  }
+
+  function togglePause() {
+    const howl = howlRef.current;
+    if (!howl) return;
+    if (pausedRef.current) {
+      howl.play();
+      playingRef.current = true;
+      pausedRef.current = false;
+      setPaused(false);
+      setStatus(`正在播放: ${currentSongRef.current?.title ?? ''} - ${currentSongRef.current?.artist ?? ''}`);
+    } else {
+      howl.pause();
+      playingRef.current = false;
+      pausedRef.current = true;
+      setPaused(true);
+      setStatus('已暂停');
+    }
+    sendPlaybackPosition({
+      position: howl.seek() as number,
+      duration: howl.duration(),
+      song: currentSongRef.current,
+      isPaused: pausedRef.current,
+    });
   }
 
   async function handleEnded() {
@@ -185,6 +229,7 @@ export default function Player() {
       } else {
         setStatus('队列为空，等待点歌...');
         setCurrentSong(null);
+        sendPlaybackPosition({ position: 0, duration: 0, song: null, isPaused: true });
       }
     } catch {
       retryCountRef.current += 1;
@@ -198,6 +243,22 @@ export default function Player() {
   }
 
   handleEndedRef.current = handleEnded;
+  togglePauseRef.current = togglePause;
+
+  function reportPosition() {
+    const howl = howlRef.current;
+    sendPlaybackPosition({
+      position: howl ? (howl.seek() as number) : 0,
+      duration: howl ? howl.duration() : 0,
+      song: currentSongRef.current,
+      isPaused: pausedRef.current,
+    });
+  }
+  reportPositionRef.current = reportPosition;
+
+  useEffect(() => {
+    startedRef.current = started;
+  }, [started]);
 
   function seekFromEvent(e: MouseEvent<HTMLDivElement> | TouchEvent<HTMLDivElement>) {
     const bar = progressBarRef.current;
@@ -257,6 +318,30 @@ export default function Player() {
   const handleWs = useCallback((msg: { type: string; data: unknown }) => {
     if (msg.type === 'skip') {
       handleEndedRef.current();
+    }
+    if (msg.type === 'playback_control') {
+      const { action, position } = msg.data as { action: string; position?: number };
+      if (action === 'pause') {
+        if (howlRef.current && playingRef.current) togglePauseRef.current();
+      } else if (action === 'resume') {
+        if (howlRef.current && pausedRef.current) {
+          togglePauseRef.current();
+        } else if (!howlRef.current && startedRef.current) {
+          handleEndedRef.current();
+        }
+      } else if (action === 'start') {
+        if (!howlRef.current && startedRef.current) {
+          handleEndedRef.current();
+        }
+      } else if (action === 'seek' && position != null) {
+        const howl = howlRef.current;
+        if (howl) {
+          howl.seek(position);
+          setCurrentTime(position);
+        }
+      } else if (action === 'report_position') {
+        reportPositionRef.current();
+      }
     }
   }, []);
   useWebSocket(handleWs);
@@ -381,7 +466,23 @@ export default function Player() {
             </div>
           </div>
 
-          <div className="mt-4 flex items-center gap-2">
+          <button
+            onClick={togglePause}
+            className="mt-2 mb-2 w-10 h-10 flex items-center justify-center rounded-full bg-slate-800 hover:bg-slate-700 border border-slate-600 transition-colors"
+            title={paused ? '继续播放' : '暂停'}
+          >
+            {paused ? (
+              <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-white ml-0.5">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-white">
+                <path d="M6 4h4v16H6zM14 4h4v16h-4z" />
+              </svg>
+            )}
+          </button>
+
+          <div className="mt-2 flex items-center gap-2">
             <span className="inline-block w-2 h-2 bg-green-400 rounded-full animate-pulse" />
             <span className="text-sm text-slate-400">{status}</span>
           </div>

@@ -1,7 +1,14 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, type MouseEvent, type TouchEvent } from 'react';
 import { getQueue, removeFromQueue, searchSongs, adminFetch, type QueueItem, type Song } from '../api';
 import { getAdminPassword, setAdminPassword } from '../utils';
 import { useWebSocket } from '../hooks/useWebSocket';
+
+function formatTime(sec: number): string {
+  if (!isFinite(sec) || sec < 0) return '0:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
 
 export default function Admin() {
   const [password, setPassword] = useState(getAdminPassword());
@@ -10,6 +17,17 @@ export default function Admin() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [playlists, setPlaylists] = useState<any[]>([]);
   const [tab, setTab] = useState<'queue' | 'fallback' | 'settings'>('queue');
+
+  // Player sync state
+  const [playerPosition, setPlayerPosition] = useState(0);
+  const [playerDuration, setPlayerDuration] = useState(0);
+  const [playerSong, setPlayerSong] = useState<Song | null>(null);
+  const [playerPaused, setPlayerPaused] = useState(true);
+  const [adminSeeking, setAdminSeeking] = useState(false);
+  const adminSeekValueRef = useRef(0);
+  const adminProgressBarRef = useRef<HTMLDivElement>(null);
+  const playerPositionRef = useRef(0);
+  const playerDurationRef = useRef(0);
 
   // Fallback playlist creation
   const [fbName, setFbName] = useState('');
@@ -25,8 +43,41 @@ export default function Admin() {
   const handleWs = useCallback((msg: { type: string; data: unknown }) => {
     if (msg.type === 'queue_update') setQueue(msg.data as QueueItem[]);
     if (msg.type === 'fallback_update') setPlaylists(msg.data as any[]);
+    if (msg.type === 'playback_position') {
+      const d = msg.data as { position: number; duration: number; song: Song | null; isPaused: boolean };
+      playerPositionRef.current = d.position;
+      playerDurationRef.current = d.duration;
+      if (!adminSeekingRef.current) {
+        setPlayerPosition(d.position);
+      }
+      setPlayerDuration(d.duration);
+      setPlayerSong(d.song);
+      setPlayerPaused(d.isPaused);
+    }
   }, []);
-  useWebSocket(handleWs);
+  const { connected } = useWebSocket(handleWs);
+  const passwordRef = useRef(password);
+  passwordRef.current = password;
+  const adminSeekingRef = useRef(false);
+
+  useEffect(() => {
+    adminSeekingRef.current = adminSeeking;
+  }, [adminSeeking]);
+
+  useEffect(() => {
+    if (!connected || !loggedIn) return;
+    adminFetch('/playback', passwordRef.current, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'report_position' }),
+    }).catch(() => {});
+    const timer = setInterval(() => {
+      adminFetch('/playback', passwordRef.current, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'report_position' }),
+      }).catch(() => {});
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [connected, loggedIn]);
 
   async function handleLogin() {
     setLoginError('');
@@ -62,6 +113,69 @@ export default function Admin() {
   async function handleNext() {
     await adminFetch('/next', password, { method: 'POST' });
   }
+
+  async function handlePauseResume() {
+    if (!playerSong) {
+      await adminFetch('/playback', password, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'start' }),
+      });
+    } else {
+      await adminFetch('/playback', password, {
+        method: 'POST',
+        body: JSON.stringify({ action: playerPaused ? 'resume' : 'pause' }),
+      });
+    }
+  }
+
+  async function handleAdminSeek(position: number) {
+    await adminFetch('/playback', password, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'seek', position }),
+    });
+  }
+
+  function adminSeekFromEvent(e: MouseEvent<HTMLDivElement> | TouchEvent<HTMLDivElement>) {
+    const bar = adminProgressBarRef.current;
+    if (!bar || playerDuration <= 0) return;
+    const rect = bar.getBoundingClientRect();
+    const clientX = 'touches' in e ? e.touches[0]?.clientX ?? e.changedTouches[0]?.clientX : e.clientX;
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const seekTo = ratio * playerDuration;
+    adminSeekValueRef.current = seekTo;
+    setPlayerPosition(seekTo);
+  }
+
+  useEffect(() => {
+    if (!adminSeeking) return;
+
+    function handleMove(e: globalThis.MouseEvent | globalThis.TouchEvent) {
+      const bar = adminProgressBarRef.current;
+      if (!bar || playerDurationRef.current <= 0) return;
+      const rect = bar.getBoundingClientRect();
+      const clientX = 'touches' in e ? (e as globalThis.TouchEvent).touches[0]?.clientX ?? (e as globalThis.TouchEvent).changedTouches[0]?.clientX : (e as globalThis.MouseEvent).clientX;
+      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      const seekTo = ratio * playerDurationRef.current;
+      adminSeekValueRef.current = seekTo;
+      setPlayerPosition(seekTo);
+    }
+
+    function handleUp() {
+      handleAdminSeek(adminSeekValueRef.current);
+      setAdminSeeking(false);
+    }
+
+    document.addEventListener('mousemove', handleMove);
+    document.addEventListener('mouseup', handleUp);
+    document.addEventListener('touchmove', handleMove, { passive: true });
+    document.addEventListener('touchend', handleUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMove);
+      document.removeEventListener('mouseup', handleUp);
+      document.removeEventListener('touchmove', handleMove);
+      document.removeEventListener('touchend', handleUp);
+    };
+  }, [adminSeeking]);
 
   async function handleActivateFallback(id: number) {
     await adminFetch(`/fallback/${id}/activate`, password, { method: 'PUT' });
@@ -132,6 +246,94 @@ export default function Admin() {
 
   return (
     <div className="max-w-3xl mx-auto p-4">
+      {/* Playback control bar */}
+      <div className="bg-slate-800 rounded-xl p-4 mb-4">
+        <div className="flex items-center gap-4">
+          {playerSong?.imgUrl && (
+            <img
+              src={playerSong.imgUrl}
+              alt={playerSong.title}
+              className="w-14 h-14 rounded-lg object-cover flex-shrink-0"
+            />
+          )}
+          <div className="flex-1 min-w-0">
+            {playerSong ? (
+              <>
+                <p className="font-medium text-sm truncate">{playerSong.title}</p>
+                <p className="text-xs text-slate-400 truncate">{playerSong.artist}</p>
+              </>
+            ) : (
+              <p className="text-sm text-slate-500">未在播放</p>
+            )}
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              onClick={handlePauseResume}
+              className="w-9 h-9 flex items-center justify-center rounded-full bg-purple-600 hover:bg-purple-700 transition-colors"
+              title={!playerSong ? '开始播放' : playerPaused ? '继续播放' : '暂停'}
+            >
+              {!playerSong ? (
+                <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 text-white ml-0.5">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              ) : playerPaused ? (
+                <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 text-white ml-0.5">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 text-white">
+                  <path d="M6 4h4v16H6zM14 4h4v16h-4z" />
+                </svg>
+              )}
+            </button>
+            <button
+              onClick={handleNext}
+              className="w-9 h-9 flex items-center justify-center rounded-full bg-slate-700 hover:bg-slate-600 border border-slate-600 transition-colors"
+              title="下一首"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 text-white">
+                <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Progress bar */}
+        <div className="mt-3">
+          <div
+            ref={adminProgressBarRef}
+            className="relative w-full h-4 flex items-center cursor-pointer group"
+            onClick={adminSeekFromEvent}
+            onMouseDown={(e) => {
+              adminSeekFromEvent(e);
+              setAdminSeeking(true);
+            }}
+            onTouchStart={(e) => {
+              adminSeekFromEvent(e);
+              setAdminSeeking(true);
+            }}
+          >
+            <div className="relative w-full h-1 bg-slate-700 rounded-full">
+              <div
+                className="absolute inset-y-0 left-0 bg-gradient-to-r from-purple-500 to-fuchsia-500 rounded-full"
+                style={{ width: playerDuration > 0 ? `${(playerPosition / playerDuration) * 100}%` : '0%' }}
+              />
+              <div
+                className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow-md transition-opacity ${
+                  adminSeeking ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                }`}
+                style={{ left: playerDuration > 0 ? `calc(${(playerPosition / playerDuration) * 100}% - 6px)` : '-6px' }}
+              />
+            </div>
+          </div>
+          <div className="flex justify-between mt-1 text-xs text-slate-500 tabular-nums">
+            <span>{formatTime(playerPosition)}</span>
+            <span>{formatTime(playerDuration)}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Tabs */}
       <div className="flex gap-2 mb-4">
         {(['queue', 'fallback', 'settings'] as const).map((t) => (
           <button
@@ -146,11 +348,6 @@ export default function Admin() {
 
       {tab === 'queue' && (
         <div>
-          <div className="flex gap-2 mb-4">
-            <button onClick={handleNext} className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm">
-              下一首
-            </button>
-          </div>
           <div className="space-y-1">
             {queue.filter(q => q.status !== 'done' && q.status !== 'skipped').map((item) => (
               <div

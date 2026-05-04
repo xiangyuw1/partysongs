@@ -75,6 +75,13 @@ router.post('/volume', (req, res) => {
   res.json({ ok: true });
 });
 
+router.post('/playback', (req, res) => {
+  const { action, position } = req.body as { action: string; position?: number };
+  if (!action) return res.status(400).json({ error: '缺少 action' });
+  broadcast({ type: 'playback_control', data: { action, position } });
+  res.json({ ok: true });
+});
+
 router.post('/mode', (req, res) => {
   const { mode } = req.body as { mode: 'queue_first' | 'fallback_only' };
   q.updatePlaybackState({ mode });

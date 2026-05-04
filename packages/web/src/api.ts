@@ -98,3 +98,13 @@ export async function adminFetch(path: string, password: string, init?: RequestI
   }
   return data;
 }
+
+export async function sendPlaybackPosition(data: { position: number; duration: number; song: Song | null; isPaused: boolean }) {
+  try {
+    await fetch(`${API_BASE}/player/position`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+  } catch { /* ignore */ }
+}
