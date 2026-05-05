@@ -62,6 +62,7 @@ export default function Player() {
   const togglePauseRef = useRef<() => void>(() => {});
   const startedRef = useRef(false);
   const reportPositionRef = useRef<() => void>(() => {});
+  const playGenRef = useRef(0);
 
   function fetchLyrics(song: Song) {
     setLyrics([]);
@@ -132,10 +133,12 @@ export default function Player() {
 
   function playSong(song: Song, seekTo?: number) {
     stopCurrent();
+    const gen = ++playGenRef.current;
     setStatus(`获取播放链接: ${song.title}...`);
     fetchLyrics(song);
 
     getPlayerUrl(song).then((url) => {
+      if (gen !== playGenRef.current) return;
       if (!url) {
         setStatus(`无法播放: ${song.title}，跳过`);
         console.warn('No URL for:', song.title, song.source);
@@ -172,6 +175,7 @@ export default function Player() {
       }
       startProgressSync();
     }).catch((err) => {
+      if (gen !== playGenRef.current) return;
       console.error('getPlayerUrl error:', err);
       setStatus(`获取链接失败: ${song.title}，跳过`);
       setTimeout(() => handleEnded(), 2000);
