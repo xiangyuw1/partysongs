@@ -99,6 +99,17 @@ export async function adminFetch(path: string, password: string, init?: RequestI
   return data;
 }
 
+export async function importPlaylist(
+  password: string,
+  url: string,
+  mode: 'fallback' | 'queue'
+): Promise<{ playlist?: any; queueItems?: QueueItem[]; count: number }> {
+  return adminFetch('/import-playlist', password, {
+    method: 'POST',
+    body: JSON.stringify({ url, mode }),
+  });
+}
+
 export async function sendPlaybackPosition(data: { position: number; duration: number; song: Song | null; isPaused: boolean }) {
   try {
     await fetch(`${API_BASE}/player/position`, {
