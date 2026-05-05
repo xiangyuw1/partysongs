@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getUrl } from '../services/music.js';
+import { getUrl, resolvePendingSong, isGdSupported } from '../services/music.js';
 import { getNextSong } from './admin.js';
 import * as queue from '../services/queue.js';
 import { broadcast } from '../services/ws.js';
@@ -10,9 +10,14 @@ const router: ReturnType<typeof Router> = Router();
 const GD_API = 'https://music-api.gdstudio.xyz/api.php';
 
 router.get('/pic/:source/:picId', async (req, res) => {
-  const { source, picId } = req.params;
+  let { source, picId } = req.params;
   const size = req.query.size || '300';
   try {
+    if (!isGdSupported(source)) {
+      const resolved = await resolvePendingSong({ id: picId, source: source as any, title: '', artist: '' });
+      source = resolved.source;
+      picId = resolved.id;
+    }
     const apiUrl = `${GD_API}?types=pic&source=${source}&id=${picId}&size=${size}`;
     const resp = await fetch(apiUrl, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
@@ -28,9 +33,14 @@ router.get('/pic/:source/:picId', async (req, res) => {
 });
 
 router.get('/lyrics', async (req, res) => {
-  const { source, id } = req.query as { source?: string; id?: string };
+  let { source, id, title, artist } = req.query as { source?: string; id?: string; title?: string; artist?: string };
   if (!source || !id) return res.status(400).json({ error: '缺少 source 或 id' });
   try {
+    if (!isGdSupported(source)) {
+      const resolved = await resolvePendingSong({ id, source: source as any, title: title || '', artist: artist || '' });
+      source = resolved.source;
+      id = resolved.id;
+    }
     const apiUrl = `${GD_API}?types=lyric&source=${source}&id=${id}`;
     const resp = await fetch(apiUrl, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },

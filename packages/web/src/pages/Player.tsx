@@ -67,7 +67,7 @@ export default function Player() {
     setLyrics([]);
     lyricsRef.current = [];
     setActiveLine(-1);
-    getLyrics(song.source, song.id).then((data) => {
+    getLyrics(song.source, song.id, song.title, song.artist).then((data) => {
       if (!data?.lyric) return;
       const parsed = parseLrc(data.lyric);
       lyricsRef.current = parsed;

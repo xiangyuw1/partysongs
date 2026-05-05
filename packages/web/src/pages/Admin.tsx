@@ -233,8 +233,12 @@ export default function Admin() {
     setImporting(true);
     setImportError('');
     try {
-      await importPlaylist(password, importUrl.trim(), importMode);
+      const result = await importPlaylist(password, importUrl.trim(), importMode);
       setImportUrl('');
+      if (result.pendingCount && result.pendingCount > 0) {
+        setImportError(`已导入 ${result.count} 首，其中 ${result.pendingCount} 首将在播放时自动匹配音源`);
+        setTimeout(() => setImportError(''), 5000);
+      }
       loadData();
       if (importMode === 'queue') {
         setTab('queue');

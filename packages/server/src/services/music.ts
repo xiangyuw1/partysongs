@@ -86,6 +86,10 @@ export async function searchSource(keyword: string, source: MusicSource): Promis
 }
 
 export async function getUrl(song: Song): Promise<string | null> {
+  if (!isGdSupported(song.source)) {
+    song = await resolvePendingSong(song);
+    if (!isGdSupported(song.source)) return null;
+  }
   try {
     const params = new URLSearchParams({
       types: 'url',
@@ -111,11 +115,12 @@ const METING_API = 'https://api.injahow.cn/meting';
 type PlaylistPlatform = 'netease' | 'tencent' | 'kugou' | 'kuwo' | 'migu';
 
 interface MetingPlaylistItem {
-  id: string | number;
+  id?: string | number;
   name: string;
   artist: string | string[];
   album?: string;
   pic?: string;
+  url?: string;
 }
 
 export interface PlaylistUrlInfo {
@@ -124,6 +129,55 @@ export interface PlaylistUrlInfo {
 }
 
 const MAX_IMPORT_SONGS = 200;
+const GD_SOURCES: MusicSource[] = ['netease', 'joox'];
+
+export function isGdSupported(source: string): source is MusicSource {
+  return (GD_SOURCES as string[]).includes(source);
+}
+
+function matchSongScore(target: Song, candidate: Song): number {
+  const t = target.title.toLowerCase().trim();
+  const c = candidate.title.toLowerCase().trim();
+  if (t === c) return 100;
+  if (t.includes(c) || c.includes(t)) return 80;
+
+  const ta = target.artist.toLowerCase().trim();
+  const ca = candidate.artist.toLowerCase().trim();
+  const artistMatch = ta === ca ? 1 : ta.includes(ca) || ca.includes(ta) ? 0.5 : 0;
+
+  if (artistMatch === 0) return 0;
+  return 30 + artistMatch * 30;
+}
+
+const MATCH_THRESHOLD = 60;
+
+async function searchMatchForSong(song: Song): Promise<Song | null> {
+  const keyword = `${song.title} ${song.artist}`.trim();
+  const result = await searchAll(keyword);
+  let best: Song | null = null;
+  let bestScore = 0;
+  for (const c of result.songs) {
+    if (!isGdSupported(c.source)) continue;
+    const score = matchSongScore(song, c);
+    if (score > bestScore) {
+      bestScore = score;
+      best = c;
+    }
+  }
+  return bestScore >= MATCH_THRESHOLD ? best : null;
+}
+
+export async function resolvePendingSong(song: Song): Promise<Song> {
+  if (isGdSupported(song.source)) return song;
+  console.log(`[Music] Resolving non-GD song: ${song.title} - ${song.artist} (source: ${song.source})`);
+  const matched = await searchMatchForSong(song);
+  if (matched) {
+    console.log(`[Music] Matched: ${matched.title} - ${matched.artist} (${matched.source}:${matched.id})`);
+    return { ...song, source: matched.source, id: matched.id };
+  }
+  console.log(`[Music] No match for: ${song.title} - ${song.artist}`);
+  return song;
+}
 
 export function parsePlaylistUrl(input: string): PlaylistUrlInfo | null {
   const trimmed = input.trim();
@@ -138,7 +192,7 @@ export function parsePlaylistUrl(input: string): PlaylistUrlInfo | null {
   }
 
   if (/y\.qq\.com/.test(trimmed)) {
-    const m = trimmed.match(/playlist\/(\d+)/) || trimmed.match(/playlistId=(\d+)/);
+    const m = trimmed.match(/playlist\/(\d+)/) || trimmed.match(/playlistId=(\d+)/) || trimmed.match(/[?&]id=(\d+)/);
     if (m) return { platform: 'tencent', id: m[1] };
   }
 
@@ -163,7 +217,7 @@ export function parsePlaylistUrl(input: string): PlaylistUrlInfo | null {
 export async function fetchPlaylist(platform: PlaylistPlatform, id: string): Promise<Song[]> {
   const params = new URLSearchParams({
     type: 'playlist',
-    source: platform,
+    server: platform,
     id,
   });
   const res = await fetch(`${METING_API}/?${params}`, {
@@ -173,12 +227,37 @@ export async function fetchPlaylist(platform: PlaylistPlatform, id: string): Pro
   const data: MetingPlaylistItem[] = await res.json();
   if (!Array.isArray(data) || data.length === 0) return [];
 
-  return data.slice(0, MAX_IMPORT_SONGS).map((item) => ({
-    id: String(item.id),
-    source: platform as MusicSource,
-    title: item.name ?? '',
-    artist: Array.isArray(item.artist) ? item.artist.join(' / ') : String(item.artist ?? ''),
-    album: item.album ?? undefined,
-    imgUrl: item.pic ?? undefined,
-  }));
+  const pendingCount = data.filter((item) => {
+    let src = platform;
+    if (item.url) {
+      const m = item.url.match(/server=([^&]+)/);
+      if (m) src = m[1] as PlaylistPlatform;
+    }
+    return !isGdSupported(src);
+  }).length;
+
+  if (pendingCount > 0) {
+    console.log(`[Music] Playlist: ${pendingCount} songs will be resolved on playback (non-netease/joox)`);
+  }
+
+  return data.slice(0, MAX_IMPORT_SONGS).map((item) => {
+    let songSource = platform;
+    let songId = item.id != null ? String(item.id) : '';
+
+    if (!songId && item.url) {
+      const serverMatch = item.url.match(/server=([^&]+)/);
+      const idMatch = item.url.match(/id=([^&]+)/);
+      if (serverMatch) songSource = serverMatch[1] as PlaylistPlatform;
+      if (idMatch) songId = idMatch[1];
+    }
+
+    return {
+      id: songId,
+      source: songSource as MusicSource,
+      title: item.name ?? '',
+      artist: Array.isArray(item.artist) ? item.artist.join(' / ') : String(item.artist ?? ''),
+      album: item.album ?? undefined,
+      imgUrl: item.pic ?? undefined,
+    };
+  });
 }
