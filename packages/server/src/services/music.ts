@@ -87,9 +87,32 @@ export async function searchSource(keyword: string, source: MusicSource): Promis
 
 export async function getUrl(song: Song): Promise<string | null> {
   if (!isGdSupported(song.source)) {
-    song = await resolvePendingSong(song);
-    if (!isGdSupported(song.source)) return null;
+    const resolved = await resolvePendingSong(song);
+    if (!isGdSupported(resolved.source)) return null;
+    const url = await fetchGdUrl(resolved);
+    if (url) return url;
+
+    console.log(`[Music] URL failed for ${resolved.source}:${resolved.id}, trying fallbacks...`);
+    const cacheKey = `${song.source}:${song.id}`;
+    const cached = resolveCacheList.get(cacheKey);
+    if (cached) {
+      const candidates = await cached;
+      for (const c of candidates) {
+        if (c.source === resolved.source && c.id === resolved.id) continue;
+        const fallbackUrl = await fetchGdUrl(c);
+        if (fallbackUrl) {
+          console.log(`[Music] Fallback OK: ${c.source}:${c.id}`);
+          resolveCache.set(cacheKey, Promise.resolve({ ...song, source: c.source, id: c.id }));
+          return fallbackUrl;
+        }
+      }
+    }
+    return null;
   }
+  return fetchGdUrl(song);
+}
+
+async function fetchGdUrl(song: Song): Promise<string | null> {
   try {
     const params = new URLSearchParams({
       types: 'url',
@@ -170,11 +193,19 @@ function toSimplified(str: string): string {
 }
 
 function matchSongScore(target: Song, candidate: Song): number {
-  const t = toSimplified(target.title.toLowerCase().trim());
-  const c = toSimplified(candidate.title.toLowerCase().trim());
-  const ta = toSimplified(target.artist.toLowerCase().trim());
-  const ca = toSimplified(candidate.artist.toLowerCase().trim());
-  const artistMatch = ta === ca ? 1 : ta.includes(ca) || ca.includes(ta) ? 0.5 : 0;
+  const t = toSimplified(target.title.toLowerCase().trim()).replace(/\s+/g, '');
+  const c = toSimplified(candidate.title.toLowerCase().trim()).replace(/\s+/g, '');
+  const ta = toSimplified(target.artist.toLowerCase().trim()).replace(/\./g, '').replace(/\s*[/&+]\s*/g, '/');
+  const ca = toSimplified(candidate.artist.toLowerCase().trim()).replace(/\./g, '').replace(/\s*[/&+]\s*/g, '/');
+
+  let artistMatch: number;
+  if (ta === ca) {
+    artistMatch = 1;
+  } else if (ta.includes(ca) || ca.includes(ta)) {
+    artistMatch = (ca.includes('/') && !ta.includes('/')) ? 0.2 : 0.5;
+  } else {
+    artistMatch = 0;
+  }
 
   if (t === c) return 75 + artistMatch * 25;
   if (t.includes(c) || c.includes(t)) return 55 + artistMatch * 25;
@@ -186,21 +217,21 @@ function matchSongScore(target: Song, candidate: Song): number {
 const MATCH_THRESHOLD = 60;
 
 const resolveCache = new Map<string, Promise<Song>>();
+const resolveCacheList = new Map<string, Promise<Song[]>>();
 
-async function searchMatchForSong(song: Song): Promise<Song | null> {
+async function searchMatchForSong(song: Song): Promise<Song[]> {
   const keyword = `${song.title} ${song.artist}`.trim();
   const result = await searchAll(keyword);
-  let best: Song | null = null;
-  let bestScore = 0;
+  const matches: { song: Song; score: number }[] = [];
   for (const c of result.songs) {
     if (!isGdSupported(c.source)) continue;
     const score = matchSongScore(song, c);
-    if (score > bestScore) {
-      bestScore = score;
-      best = c;
+    if (score >= MATCH_THRESHOLD) {
+      matches.push({ song: c, score });
     }
   }
-  return bestScore >= MATCH_THRESHOLD ? best : null;
+  matches.sort((a, b) => b.score - a.score);
+  return matches.map((m) => m.song);
 }
 
 export async function resolvePendingSong(song: Song): Promise<Song> {
@@ -216,8 +247,10 @@ export async function resolvePendingSong(song: Song): Promise<Song> {
 
   const promise = (async () => {
     console.log(`[Music] Resolving non-GD song: ${song.title} - ${song.artist} (source: ${song.source})`);
-    const matched = await searchMatchForSong(song);
-    if (matched) {
+    const candidates = await searchMatchForSong(song);
+    resolveCacheList.set(cacheKey, Promise.resolve(candidates));
+    if (candidates.length > 0) {
+      const matched = candidates[0];
       console.log(`[Music] Matched: ${matched.title} - ${matched.artist} (${matched.source}:${matched.id})`);
       return { ...song, source: matched.source, id: matched.id };
     }

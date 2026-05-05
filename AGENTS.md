@@ -45,9 +45,11 @@ Only `netease` and `joox` are natively supported by GD API for URL/lyric resolut
 2. Playback: `getUrl()` detects `isGdSupported(source) === false` → calls `resolvePendingSong()` → searches GD API across all sources → scores match → resolves URL
 3. Lyrics same path: `GET /player/lyrics` for non-GD source also calls `resolvePendingSong()`
 
-`resolvePendingSong()` caches the search **Promise** in a `Map<string, Promise<Song>>` (keyed by `${source}:${id}`), so concurrent requests for the same song (e.g. URL + lyrics fetched simultaneously) share one search. Cache lives until server restart. The `types=url` and `types=lyric` GD API calls are separate from search and don't count against the 5min/50req rate limit.
+`resolvePendingSong()` caches the search **Promise** in a `Map<string, Promise<Song>>` (keyed by `${source}:${id}`), so concurrent requests for the same song (e.g. URL + lyrics fetched simultaneously) share one search. A second cache `resolveCacheList` stores the full ranked candidate list. Cache lives until server restart. The `types=url` and `types=lyric` GD API calls are separate from search and don't count against the 5min/50req rate limit.
 
 `isGdSupported()` and `resolvePendingSong()` are exported from `music.ts`, shared by `playback.ts` routes. `resolvePendingSong()` needs `title` and `artist` — frontend lyrics API calls must pass them.
+
+`searchMatchForSong()` returns all candidates above threshold sorted by score. `resolvePendingSong()` returns the top candidate. `getUrl()` tries the top candidate first — if URL resolution fails (e.g. netease copyright/region block), it iterates through the remaining candidates as fallbacks (e.g. falling back to joox).
 
 #### Song matching and traditional Chinese
 
@@ -58,6 +60,7 @@ Only `netease` and `joox` are natively supported by GD API for URL/lyric resolut
 Scoring rules (after normalization):
 - Exact title + exact artist → 100
 - Exact title + partial artist → 87.5
+- Exact title + suspicious artist (candidate has multi-artist `/` but target doesn't, e.g. cover "周杰伦. / 溺死的鱼") → 80
 - Exact title + no artist → 75
 - Title substring + exact artist → 80
 - Title substring + partial artist → 67.5
