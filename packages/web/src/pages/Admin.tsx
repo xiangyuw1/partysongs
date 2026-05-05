@@ -420,7 +420,14 @@ export default function Admin() {
             </div>
           )}
           <div className="space-y-1">
-            {queue.filter(q => q.status !== 'done' && q.status !== 'skipped').map((item) => (
+            {(() => {
+              const visible = queue.filter(q => q.status !== 'done' && q.status !== 'skipped');
+              const pendingItems = visible.filter(q => q.status === 'pending');
+              return visible.map((item) => {
+                const pendingIdx = pendingItems.findIndex(p => p.id === item.id);
+                const canUp = item.status === 'pending' && pendingIdx > 0;
+                const canDown = item.status === 'pending' && pendingIdx < pendingItems.length - 1;
+                return (
               <div
                 key={item.id}
                 draggable={item.status === 'pending'}
@@ -439,15 +446,44 @@ export default function Admin() {
                   setDragOverId(null);
                 }}
                 onDragEnd={() => { setDragId(null); setDragOverId(null); }}
-                className={`flex items-center gap-3 rounded-lg p-3 text-sm transition-opacity ${
+                className={`flex items-center gap-2 rounded-lg p-3 text-sm transition-opacity ${
                   item.status === 'playing' ? 'bg-purple-900/50 border border-purple-600' :
                   dragOverId === item.id ? 'bg-slate-700 border border-purple-400' :
                   'bg-slate-800'
                 } ${dragId === item.id ? 'opacity-40' : ''}`}
               >
-                <span className="text-slate-500 w-6 text-center cursor-grab">
+                <span className="text-slate-500 w-6 text-center cursor-grab hidden sm:block">
                   {item.status === 'playing' ? '▶' : '⠿'}
                 </span>
+                <div className="flex flex-col gap-0.5 sm:hidden">
+                  {canUp && (
+                    <button
+                      onClick={() => handleReorder(item.id, pendingItems[0].id)}
+                      className="text-slate-400 hover:text-white p-0.5"
+                      title="置顶"
+                    >
+                      <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M10 17a.75.75 0 01-.75-.75V5.612L5.29 9.77a.75.75 0 01-1.08-1.04l5.25-5.5a.75.75 0 011.08 0l5.25 5.5a.75.75 0 11-1.08 1.04l-3.96-4.158V16.25A.75.75 0 0110 17z" clipRule="evenodd" /></svg>
+                    </button>
+                  )}
+                  {canUp && (
+                    <button
+                      onClick={() => handleReorder(item.id, pendingItems[pendingIdx - 1].id)}
+                      className="text-slate-400 hover:text-white p-0.5"
+                      title="上移"
+                    >
+                      <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M14.77 12.79a.75.75 0 01-1.06-.02L10 8.832 6.29 12.77a.75.75 0 11-1.08-1.04l4.25-4.5a.75.75 0 011.08 0l4.25 4.5a.75.75 0 01-.02 1.06z" clipRule="evenodd" /></svg>
+                    </button>
+                  )}
+                  {canDown && (
+                    <button
+                      onClick={() => handleReorder(item.id, pendingItems[pendingIdx + 1].id)}
+                      className="text-slate-400 hover:text-white p-0.5"
+                      title="下移"
+                    >
+                      <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" /></svg>
+                    </button>
+                  )}
+                </div>
                 <div className="flex-1 min-w-0">
                   <span className="font-medium">{item.title}</span>
                   <span className="text-slate-400"> - {item.artist}</span>
@@ -462,7 +498,9 @@ export default function Admin() {
                   </button>
                 )}
               </div>
-            ))}
+                );
+              });
+            })()}
             {queue.filter(q => q.status !== 'done' && q.status !== 'skipped').length === 0 && (
               <p className="text-slate-500 text-sm">队列为空</p>
             )}
