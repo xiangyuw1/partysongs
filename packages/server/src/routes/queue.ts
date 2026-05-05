@@ -61,4 +61,27 @@ router.post('/reorder', (req, res) => {
   res.json({ ok: true });
 });
 
+router.post('/shuffle', (_req, res) => {
+  const db = getDb();
+  const items = queue.getPendingQueue();
+  if (items.length <= 1) {
+    return res.json({ ok: true });
+  }
+
+  for (let i = items.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [items[i], items[j]] = [items[j], items[i]];
+  }
+
+  const stmt = db.prepare('UPDATE queue SET created_at = ? WHERE id = ?');
+  const now = new Date();
+  for (let i = 0; i < items.length; i++) {
+    const t = new Date(now.getTime() + i).toISOString();
+    stmt.run(t, items[i].id);
+  }
+
+  broadcast({ type: 'queue_update', data: queue.getFullQueue() });
+  res.json({ ok: true });
+});
+
 export default router;

@@ -49,6 +49,22 @@ export async function removeFromQueue(id: number): Promise<void> {
   await fetch(`${API_BASE}/queue/${id}`, { method: 'DELETE' });
 }
 
+export async function clearQueue(): Promise<void> {
+  await fetch(`${API_BASE}/queue/clear`, { method: 'POST' });
+}
+
+export async function shuffleQueue(): Promise<void> {
+  await fetch(`${API_BASE}/queue/shuffle`, { method: 'POST' });
+}
+
+export async function reorderQueue(fromId: number, toId: number): Promise<void> {
+  await fetch(`${API_BASE}/queue/reorder`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fromId, toId }),
+  });
+}
+
 export async function getPlayerUrl(song: Song): Promise<string | null> {
   const res = await fetch(`${API_BASE}/player/url`, {
     method: 'POST',
