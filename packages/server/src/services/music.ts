@@ -151,6 +151,8 @@ function matchSongScore(target: Song, candidate: Song): number {
 
 const MATCH_THRESHOLD = 60;
 
+const resolveCache = new Map<string, Song>();
+
 async function searchMatchForSong(song: Song): Promise<Song | null> {
   const keyword = `${song.title} ${song.artist}`.trim();
   const result = await searchAll(keyword);
@@ -169,10 +171,19 @@ async function searchMatchForSong(song: Song): Promise<Song | null> {
 
 export async function resolvePendingSong(song: Song): Promise<Song> {
   if (isGdSupported(song.source)) return song;
+
+  const cacheKey = `${song.source}:${song.id}`;
+  const cached = resolveCache.get(cacheKey);
+  if (cached) {
+    console.log(`[Music] Cache hit: ${song.title} → ${cached.source}:${cached.id}`);
+    return { ...song, source: cached.source, id: cached.id };
+  }
+
   console.log(`[Music] Resolving non-GD song: ${song.title} - ${song.artist} (source: ${song.source})`);
   const matched = await searchMatchForSong(song);
   if (matched) {
     console.log(`[Music] Matched: ${matched.title} - ${matched.artist} (${matched.source}:${matched.id})`);
+    resolveCache.set(cacheKey, matched);
     return { ...song, source: matched.source, id: matched.id };
   }
   console.log(`[Music] No match for: ${song.title} - ${song.artist}`);

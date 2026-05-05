@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, type MouseEvent, type TouchEvent } from 'react';
-import { getQueue, removeFromQueue, searchSongs, adminFetch, importPlaylist, type QueueItem, type Song } from '../api';
+import { getQueue, removeFromQueue, clearQueue, shuffleQueue, reorderQueue, searchSongs, adminFetch, importPlaylist, type QueueItem, type Song } from '../api';
 import { getAdminPassword, setAdminPassword } from '../utils';
 import { useWebSocket } from '../hooks/useWebSocket';
 
@@ -118,6 +118,33 @@ export default function Admin() {
 
   async function handleNext() {
     await adminFetch('/next', password, { method: 'POST' });
+  }
+
+  async function handleShuffle() {
+    await shuffleQueue();
+  }
+
+  async function handleClear() {
+    if (!confirm('确定清空所有待播歌曲？')) return;
+    await clearQueue();
+  }
+
+  const [dragId, setDragId] = useState<number | null>(null);
+  const [dragOverId, setDragOverId] = useState<number | null>(null);
+
+  async function handleReorder(fromId: number, toId: number) {
+    if (fromId === toId) return;
+    setQueue((prev) => {
+      const items = prev.filter((q) => q.status === 'pending');
+      const fromIdx = items.findIndex((i) => i.id === fromId);
+      const toIdx = items.findIndex((i) => i.id === toId);
+      if (fromIdx === -1 || toIdx === -1) return prev;
+      const [moved] = items.splice(fromIdx, 1);
+      items.splice(toIdx, 0, moved);
+      const playing = prev.filter((q) => q.status === 'playing');
+      return [...playing, ...items];
+    });
+    await reorderQueue(fromId, toId);
   }
 
   async function handlePauseResume() {
@@ -376,16 +403,50 @@ export default function Admin() {
 
       {tab === 'queue' && (
         <div>
+          {queue.filter(q => q.status !== 'done' && q.status !== 'skipped').length > 0 && (
+            <div className="flex gap-2 mb-3">
+              <button
+                onClick={handleShuffle}
+                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm"
+              >
+                打乱顺序
+              </button>
+              <button
+                onClick={handleClear}
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 rounded-lg text-sm"
+              >
+                清空队列
+              </button>
+            </div>
+          )}
           <div className="space-y-1">
             {queue.filter(q => q.status !== 'done' && q.status !== 'skipped').map((item) => (
               <div
                 key={item.id}
-                className={`flex items-center gap-3 rounded-lg p-3 text-sm ${
-                  item.status === 'playing' ? 'bg-purple-900/50 border border-purple-600' : 'bg-slate-800'
-                }`}
+                draggable={item.status === 'pending'}
+                onDragStart={() => item.status === 'pending' && setDragId(item.id)}
+                onDragOver={(e) => {
+                  if (item.status !== 'pending') return;
+                  e.preventDefault();
+                  setDragOverId(item.id);
+                }}
+                onDragLeave={() => setDragOverId(null)}
+                onDrop={() => {
+                  if (dragId !== null && item.status === 'pending') {
+                    handleReorder(dragId, item.id);
+                  }
+                  setDragId(null);
+                  setDragOverId(null);
+                }}
+                onDragEnd={() => { setDragId(null); setDragOverId(null); }}
+                className={`flex items-center gap-3 rounded-lg p-3 text-sm transition-opacity ${
+                  item.status === 'playing' ? 'bg-purple-900/50 border border-purple-600' :
+                  dragOverId === item.id ? 'bg-slate-700 border border-purple-400' :
+                  'bg-slate-800'
+                } ${dragId === item.id ? 'opacity-40' : ''}`}
               >
-                <span className="text-slate-500 w-6 text-center">
-                  {item.status === 'playing' ? '▶' : '#'}
+                <span className="text-slate-500 w-6 text-center cursor-grab">
+                  {item.status === 'playing' ? '▶' : '⠿'}
                 </span>
                 <div className="flex-1 min-w-0">
                   <span className="font-medium">{item.title}</span>
