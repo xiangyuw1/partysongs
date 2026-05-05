@@ -45,7 +45,7 @@ Only `netease` and `joox` are natively supported by GD API for URL/lyric resolut
 2. Playback: `getUrl()` detects `isGdSupported(source) === false` → calls `resolvePendingSong()` → searches GD API across all sources → scores match → resolves URL
 3. Lyrics same path: `GET /player/lyrics` for non-GD source also calls `resolvePendingSong()`
 
-`resolvePendingSong()` caches results in an in-memory `Map` (keyed by `${source}:${id}`), so each non-GD song only triggers **1 GD API search call** (for `types=search`) regardless of how many times URL/lyrics/pic are requested. Cache lives until server restart. The `types=url` and `types=lyric` GD API calls are separate from search and don't count against the 5min/50req rate limit.
+`resolvePendingSong()` caches the search **Promise** in a `Map<string, Promise<Song>>` (keyed by `${source}:${id}`), so concurrent requests for the same song (e.g. URL + lyrics fetched simultaneously) share one search. Cache lives until server restart. The `types=url` and `types=lyric` GD API calls are separate from search and don't count against the 5min/50req rate limit.
 
 `isGdSupported()` and `resolvePendingSong()` are exported from `music.ts`, shared by `playback.ts` routes. `resolvePendingSong()` needs `title` and `artist` — frontend lyrics API calls must pass them.
 
@@ -56,10 +56,14 @@ Only `netease` and `joox` are natively supported by GD API for URL/lyric resolut
 **joox returns traditional Chinese** for song titles and artist names (e.g. `周杰倫`, `擱淺`, `説好的幸福呢`). Imported songs from QQ/酷狗/酷我/咪咕 are in simplified Chinese. `matchSongScore()` uses a `toSimplified()` function with a built-in traditional→simplified character mapping (`T2S`, 250+ chars) to normalize both sides before comparison. Without this, joox results would score 0 and netease covers would always win.
 
 Scoring rules (after normalization):
-- Exact title match → 100
-- Title substring match → 80
-- Exact artist match (no title match) → 60
-- Partial artist match → 45
+- Exact title + exact artist → 100
+- Exact title + partial artist → 87.5
+- Exact title + no artist → 75
+- Title substring + exact artist → 80
+- Title substring + partial artist → 67.5
+- Title substring + no artist → 55 (rejected)
+- Exact artist (no title match) → 60
+- Partial artist (no title match) → 45
 - No artist match → 0 (rejected)
 - Threshold: 60
 

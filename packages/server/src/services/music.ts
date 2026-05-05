@@ -172,12 +172,12 @@ function toSimplified(str: string): string {
 function matchSongScore(target: Song, candidate: Song): number {
   const t = toSimplified(target.title.toLowerCase().trim());
   const c = toSimplified(candidate.title.toLowerCase().trim());
-  if (t === c) return 100;
-  if (t.includes(c) || c.includes(t)) return 80;
-
   const ta = toSimplified(target.artist.toLowerCase().trim());
   const ca = toSimplified(candidate.artist.toLowerCase().trim());
   const artistMatch = ta === ca ? 1 : ta.includes(ca) || ca.includes(ta) ? 0.5 : 0;
+
+  if (t === c) return 75 + artistMatch * 25;
+  if (t.includes(c) || c.includes(t)) return 55 + artistMatch * 25;
 
   if (artistMatch === 0) return 0;
   return 30 + artistMatch * 30;
@@ -185,7 +185,7 @@ function matchSongScore(target: Song, candidate: Song): number {
 
 const MATCH_THRESHOLD = 60;
 
-const resolveCache = new Map<string, Song>();
+const resolveCache = new Map<string, Promise<Song>>();
 
 async function searchMatchForSong(song: Song): Promise<Song | null> {
   const keyword = `${song.title} ${song.artist}`.trim();
@@ -209,19 +209,24 @@ export async function resolvePendingSong(song: Song): Promise<Song> {
   const cacheKey = `${song.source}:${song.id}`;
   const cached = resolveCache.get(cacheKey);
   if (cached) {
-    console.log(`[Music] Cache hit: ${song.title} → ${cached.source}:${cached.id}`);
-    return { ...song, source: cached.source, id: cached.id };
+    const resolved = await cached;
+    console.log(`[Music] Cache hit: ${song.title} → ${resolved.source}:${resolved.id}`);
+    return { ...song, source: resolved.source, id: resolved.id };
   }
 
-  console.log(`[Music] Resolving non-GD song: ${song.title} - ${song.artist} (source: ${song.source})`);
-  const matched = await searchMatchForSong(song);
-  if (matched) {
-    console.log(`[Music] Matched: ${matched.title} - ${matched.artist} (${matched.source}:${matched.id})`);
-    resolveCache.set(cacheKey, matched);
-    return { ...song, source: matched.source, id: matched.id };
-  }
-  console.log(`[Music] No match for: ${song.title} - ${song.artist}`);
-  return song;
+  const promise = (async () => {
+    console.log(`[Music] Resolving non-GD song: ${song.title} - ${song.artist} (source: ${song.source})`);
+    const matched = await searchMatchForSong(song);
+    if (matched) {
+      console.log(`[Music] Matched: ${matched.title} - ${matched.artist} (${matched.source}:${matched.id})`);
+      return { ...song, source: matched.source, id: matched.id };
+    }
+    console.log(`[Music] No match for: ${song.title} - ${song.artist}`);
+    return song;
+  })();
+
+  resolveCache.set(cacheKey, promise);
+  return promise;
 }
 
 export function parsePlaylistUrl(input: string): PlaylistUrlInfo | null {
