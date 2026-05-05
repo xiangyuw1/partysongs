@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useRef, type MouseEvent, type TouchEvent } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, type MouseEvent, type TouchEvent } from 'react';
 import { Howl } from 'howler';
+import QRCode from 'react-qr-code';
 import { getPlayerUrl, requestNext, getLyrics, sendPlaybackPosition, type Song } from '../api';
 import { useWebSocket } from '../hooks/useWebSocket';
 
@@ -36,6 +37,8 @@ function parseLrc(lrc: string): LyricLine[] {
 }
 
 export default function Player() {
+  const guestUrl = useMemo(() => `${window.location.origin}/guest`, []);
+
   const [currentSong, setCurrentSong] = useState<Song | null>(null);
   const [status, setStatus] = useState('等待开始...');
   const [started, setStarted] = useState(false);
@@ -395,6 +398,13 @@ export default function Player() {
         >
           开始播放
         </button>
+
+        <div className="mt-10 flex flex-col items-center gap-1.5 opacity-60 hover:opacity-100 transition-opacity">
+          <div className="bg-white p-2 rounded-lg shadow-lg">
+            <QRCode value={guestUrl} size={80} />
+          </div>
+          <span className="text-xs text-slate-400">扫码点歌</span>
+        </div>
       </div>
     );
   }
@@ -498,6 +508,13 @@ export default function Player() {
           <p className="text-slate-400">{status}</p>
         </div>
       )}
+
+      <div className="fixed bottom-4 right-4 flex flex-col items-center gap-1.5 opacity-60 hover:opacity-100 transition-opacity">
+        <div className="bg-white p-2 rounded-lg shadow-lg">
+          <QRCode value={guestUrl} size={80} />
+        </div>
+        <span className="text-xs text-slate-400">扫码点歌</span>
+      </div>
     </div>
   );
 }
