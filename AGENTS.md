@@ -49,6 +49,22 @@ Only `netease` and `joox` are natively supported by GD API for URL/lyric resolut
 
 `isGdSupported()` and `resolvePendingSong()` are exported from `music.ts`, shared by `playback.ts` routes. `resolvePendingSong()` needs `title` and `artist` — frontend lyrics API calls must pass them.
 
+#### Song matching and traditional Chinese
+
+`matchSongScore()` in `music.ts` scores candidate songs by title+artist comparison. GD API's `tencent` source is broken/unmaintained — **do not search it**. Only `netease` and `joox` are searched.
+
+**joox returns traditional Chinese** for song titles and artist names (e.g. `周杰倫`, `擱淺`, `説好的幸福呢`). Imported songs from QQ/酷狗/酷我/咪咕 are in simplified Chinese. `matchSongScore()` uses a `toSimplified()` function with a built-in traditional→simplified character mapping (`T2S`, 250+ chars) to normalize both sides before comparison. Without this, joox results would score 0 and netease covers would always win.
+
+Scoring rules (after normalization):
+- Exact title match → 100
+- Title substring match → 80
+- Exact artist match (no title match) → 60
+- Partial artist match → 45
+- No artist match → 0 (rejected)
+- Threshold: 60
+
+`searchAll()` searches `netease` and `joox` in parallel, deduplicates by `source:id`. `searchMatchForSong()` picks the highest-scoring candidate above threshold.
+
 ### Playlist import via Meting API
 
 Admin "备用列表" Tab imports playlists from: 网易云 (`netease`), QQ音乐 (`tencent`), 酷狗 (`kugou`), 酷我 (`kuwo`), 咪咕 (`migu`).
