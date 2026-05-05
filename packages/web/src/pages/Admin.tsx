@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, type MouseEvent, type TouchEvent } from 'react';
-import { getQueue, removeFromQueue, searchSongs, adminFetch, type QueueItem, type Song } from '../api';
+import { getQueue, removeFromQueue, searchSongs, adminFetch, importPlaylist, type QueueItem, type Song } from '../api';
 import { getAdminPassword, setAdminPassword } from '../utils';
 import { useWebSocket } from '../hooks/useWebSocket';
 
@@ -35,6 +35,12 @@ export default function Admin() {
   const [fbResults, setFbResults] = useState<Song[]>([]);
   const [fbSongs, setFbSongs] = useState<Song[]>([]);
   const [searching, setSearching] = useState(false);
+
+  // Import from URL
+  const [importUrl, setImportUrl] = useState('');
+  const [importMode, setImportMode] = useState<'fallback' | 'queue'>('fallback');
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState('');
 
   useEffect(() => {
     if (loggedIn) loadData();
@@ -222,6 +228,24 @@ export default function Admin() {
     loadData();
   }
 
+  async function handleImportPlaylist() {
+    if (!importUrl.trim()) return;
+    setImporting(true);
+    setImportError('');
+    try {
+      await importPlaylist(password, importUrl.trim(), importMode);
+      setImportUrl('');
+      loadData();
+      if (importMode === 'queue') {
+        setTab('queue');
+      }
+    } catch (e: any) {
+      setImportError(e.message || '导入失败');
+    } finally {
+      setImporting(false);
+    }
+  }
+
   if (!loggedIn) {
     return (
       <div className="max-w-sm mx-auto p-4 mt-20">
@@ -402,6 +426,52 @@ export default function Admin() {
           </div>
 
           <div className="border-t border-slate-700 pt-4">
+            <h3 className="font-medium mb-2">从链接导入</h3>
+            <input
+              type="text"
+              placeholder="粘贴歌单链接 (网易云/QQ音乐/酷狗/酷我/咪咕)"
+              value={importUrl}
+              onChange={(e) => { setImportUrl(e.target.value); setImportError(''); }}
+              onKeyDown={(e) => e.key === 'Enter' && handleImportPlaylist()}
+              className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-sm mb-2"
+            />
+            <div className="flex gap-2 mb-2">
+              <label className="flex items-center gap-1 text-sm text-slate-300">
+                <input
+                  type="radio"
+                  name="importMode"
+                  value="fallback"
+                  checked={importMode === 'fallback'}
+                  onChange={() => setImportMode('fallback')}
+                  className="accent-purple-500"
+                />
+                备用歌单
+              </label>
+              <label className="flex items-center gap-1 text-sm text-slate-300">
+                <input
+                  type="radio"
+                  name="importMode"
+                  value="queue"
+                  checked={importMode === 'queue'}
+                  onChange={() => setImportMode('queue')}
+                  className="accent-purple-500"
+                />
+                加入队列
+              </label>
+            </div>
+            {importError && (
+              <p className="text-red-400 text-xs mb-2">{importError}</p>
+            )}
+            <button
+              onClick={handleImportPlaylist}
+              disabled={!importUrl.trim() || importing}
+              className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 py-2 rounded-lg text-sm font-medium"
+            >
+              {importing ? '导入中...' : '开始导入'}
+            </button>
+          </div>
+
+          <div className="border-t border-slate-700 pt-4 mt-4">
             <h3 className="font-medium mb-2">创建备用列表</h3>
             <input
               type="text"

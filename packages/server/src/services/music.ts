@@ -103,3 +103,82 @@ export async function getUrl(song: Song): Promise<string | null> {
     return null;
   }
 }
+
+// --- Playlist import via Meting API ---
+
+const METING_API = 'https://api.injahow.cn/meting';
+
+type PlaylistPlatform = 'netease' | 'tencent' | 'kugou' | 'kuwo' | 'migu';
+
+interface MetingPlaylistItem {
+  id: string | number;
+  name: string;
+  artist: string | string[];
+  album?: string;
+  pic?: string;
+}
+
+export interface PlaylistUrlInfo {
+  platform: PlaylistPlatform;
+  id: string;
+}
+
+const MAX_IMPORT_SONGS = 200;
+
+export function parsePlaylistUrl(input: string): PlaylistUrlInfo | null {
+  const trimmed = input.trim();
+
+  if (/^\d+$/.test(trimmed)) {
+    return { platform: 'netease', id: trimmed };
+  }
+
+  if (/music\.163\.com|163cn\.tv/.test(trimmed)) {
+    const m = trimmed.match(/id=(\d+)/) || trimmed.match(/playlist\/(\d+)/);
+    if (m) return { platform: 'netease', id: m[1] };
+  }
+
+  if (/y\.qq\.com/.test(trimmed)) {
+    const m = trimmed.match(/playlist\/(\d+)/) || trimmed.match(/playlistId=(\d+)/);
+    if (m) return { platform: 'tencent', id: m[1] };
+  }
+
+  if (/kugou\.com/.test(trimmed)) {
+    const m = trimmed.match(/gcid_([^/?]+)/);
+    if (m) return { platform: 'kugou', id: m[1] };
+  }
+
+  if (/kuwo\.cn/.test(trimmed)) {
+    const m = trimmed.match(/list\/(\d+)/) || trimmed.match(/id=(\d+)/);
+    if (m) return { platform: 'kuwo', id: m[1] };
+  }
+
+  if (/migu\.cn/.test(trimmed)) {
+    const m = trimmed.match(/playlist\/([a-zA-Z0-9]+)/);
+    if (m) return { platform: 'migu', id: m[1] };
+  }
+
+  return null;
+}
+
+export async function fetchPlaylist(platform: PlaylistPlatform, id: string): Promise<Song[]> {
+  const params = new URLSearchParams({
+    type: 'playlist',
+    source: platform,
+    id,
+  });
+  const res = await fetch(`${METING_API}/?${params}`, {
+    headers: { 'User-Agent': UA },
+  });
+  if (!res.ok) throw new Error(`歌单获取失败 (HTTP ${res.status})`);
+  const data: MetingPlaylistItem[] = await res.json();
+  if (!Array.isArray(data) || data.length === 0) return [];
+
+  return data.slice(0, MAX_IMPORT_SONGS).map((item) => ({
+    id: String(item.id),
+    source: platform as MusicSource,
+    title: item.name ?? '',
+    artist: Array.isArray(item.artist) ? item.artist.join(' / ') : String(item.artist ?? ''),
+    album: item.album ?? undefined,
+    imgUrl: item.pic ?? undefined,
+  }));
+}

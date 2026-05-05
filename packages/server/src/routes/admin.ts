@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import * as q from '../services/queue.js';
 import { broadcast } from '../services/ws.js';
+import { parsePlaylistUrl, fetchPlaylist } from '../services/music.js';
 import type { Song } from '../types.js';
 
 const router: ReturnType<typeof Router> = Router();
@@ -43,6 +44,45 @@ router.delete('/fallback/:id', (req, res) => {
   q.deleteFallbackPlaylist(Number(req.params.id));
   broadcast({ type: 'fallback_update', data: q.getFallbackPlaylists() });
   res.json({ ok: true });
+});
+
+router.post('/import-playlist', async (req, res) => {
+  const { url, mode, userId, userName } = req.body as {
+    url: string;
+    mode: 'fallback' | 'queue';
+    userId?: string;
+    userName?: string;
+  };
+  if (!url) return res.status(400).json({ error: '请输入歌单链接' });
+
+  const parsed = parsePlaylistUrl(url);
+  if (!parsed) return res.status(400).json({ error: '无法识别歌单链接，请输入正确的音乐平台歌单链接' });
+
+  try {
+    const songs = await fetchPlaylist(parsed.platform, parsed.id);
+    if (songs.length === 0) return res.status(404).json({ error: '歌单内容为空或解析失败' });
+
+    if (mode === 'fallback') {
+      const platformNames: Record<string, string> = {
+        netease: '网易云', tencent: 'QQ音乐', kugou: '酷狗', kuwo: '酷我', migu: '咪咕',
+      };
+      const playlist = q.createFallbackPlaylist(
+        `导入歌单 (${platformNames[parsed.platform] || parsed.platform})`,
+        songs
+      );
+      broadcast({ type: 'fallback_update', data: q.getFallbackPlaylists() });
+      res.json({ playlist, count: songs.length });
+    } else {
+      const uid = userId || 'admin-import';
+      const uname = userName || '管理员导入';
+      const items = songs.map((song) => q.addToQueue(song, uid, uname));
+      broadcast({ type: 'queue_update', data: q.getFullQueue() });
+      res.json({ queueItems: items, count: items.length });
+    }
+  } catch (err: any) {
+    console.error('[Admin] import-playlist error:', err);
+    res.status(500).json({ error: err.message || '获取歌单失败，请稍后重试' });
+  }
 });
 
 // Playback control — skip current, let player fetch next via its own requestNext()
