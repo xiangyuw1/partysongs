@@ -5,6 +5,7 @@
  * Based on open-source projects Meting & MKOnlineMusicPlayer by metowolf & mengkun, modded by GD Studio.
  * For study purposes only. Do NOT use commercially.
  */
+import { readFileSync } from 'fs';
 import type { Song, SearchResult, MusicSource } from '../types.js';
 
 const GD_API = 'https://music-api.gdstudio.xyz/api.php';
@@ -97,8 +98,9 @@ export async function getUrl(song: Song): Promise<string | null> {
     const cached = resolveCacheList.get(cacheKey);
     if (cached) {
       const candidates = await cached;
-      for (const c of candidates) {
-        if (c.source === resolved.source && c.id === resolved.id) continue;
+      const crossSource = candidates.filter((c) => c.source !== resolved.source);
+      const sameSource = candidates.filter((c) => c.source === resolved.source && c.id !== resolved.id);
+      for (const c of [...crossSource, ...sameSource]) {
         const fallbackUrl = await fetchGdUrl(c);
         if (fallbackUrl) {
           console.log(`[Music] Fallback OK: ${c.source}:${c.id}`);
@@ -158,31 +160,21 @@ export function isGdSupported(source: string): source is MusicSource {
   return (GD_SOURCES as string[]).includes(source);
 }
 
-const T2S: Record<string, string> = {
-  倫:'伦',國:'国',兒:'儿',動:'动',愛:'爱',擱:'搁',時:'时',會:'会',楓:'枫',
-  淺:'浅',無:'无',獎:'奖',禮:'礼',約:'约',絕:'绝',給:'给',與:'与',華:'华',
-  葉:'叶',蕭:'萧',語:'语',説:'说',說:'说',贊:'赞',選:'选',邊:'边',間:'间',
-  陽:'阳',靜:'静',頒:'颁',頤:'颐',飛:'飞',開:'开',過:'过',長:'长',電:'电',
-  風:'风',雲:'云',門:'门',關:'关',頭:'头',龍:'龙',馬:'马',魚:'鱼',鳥:'鸟',
-  書:'书',畫:'画',車:'车',貝:'贝',閃:'闪',鳳:'凤',來:'来',東:'东',從:'从',
-  區:'区',卻:'却',參:'参',雙:'双',號:'号',單:'单',園:'团',圖:'图',圓:'圆',
-  塵:'尘',處:'处',備:'备',夢:'梦',實:'实',對:'对',導:'导',歲:'岁',嶺:'岭',
-  幣:'币',幫:'帮',帶:'带',幹:'干',廣:'广',慶:'庆',應:'应',戰:'战',戲:'戏',
-  擁:'拥',擔:'担',據:'据',撃:'击',數:'数',於:'于',條:'条',極:'极',樣:'样',
-  樹:'树',橋:'桥',機:'机',歡:'欢',歸:'归',殺:'杀',氣:'气',決:'决',沒:'没',
-  濟:'济',為:'为',燈:'灯',點:'点',爺:'爷',爾:'尔',現:'现',環:'环',異:'异',
-  療:'疗',盡:'尽',監:'监',碼:'码',確:'确',種:'种',積:'积',競:'竞',筆:'笔',
-  節:'节',籃:'篮',組:'组',經:'经',結:'结',網:'网',義:'义',習:'习',聯:'联',
-  聖:'圣',聲:'声',聽:'听',肅:'肃',臉:'脸',興:'兴',舊:'旧',藝:'艺',術:'术',
-  衛:'卫',衝:'冲',複:'复',見:'见',觀:'观',計:'计',訓:'训',記:'记',設:'设',
-  話:'话',該:'该',詳:'详',認:'认',誤:'误',請:'请',課:'课',調:'调',論:'论',
-  質:'质',購:'购',賽:'赛',趕:'赶',軍:'军',軟:'软',較:'较',載:'载',輝:'辉',
-  輩:'辈',輪:'轮',辦:'办',達:'达',運:'运',還:'还',進:'进',遠:'远',適:'适',
-  遲:'迟',鐵:'铁',閣:'阁',隊:'队',陣:'阵',陰:'阴',陸:'陆',隨:'随',險:'险',
-  際:'际',雜:'杂',離:'离',難:'难',霧:'雾',響:'响',頁:'页',頂:'顶',項:'项',
-  順:'顺',須:'须',預:'预',題:'题',額:'额',顏:'颜',願:'愿',館:'馆',驗:'验',
-  體:'体',髮:'发',鬥:'斗',鬧:'闹',齊:'齐',齒:'齿',龜:'龟',
-};
+const T2S: Record<string, string> = (() => {
+  const map: Record<string, string> = {};
+  try {
+    const dataPath = require.resolve('opencc-data/data/TSCharacters.txt');
+    for (const line of readFileSync(dataPath, 'utf-8').split('\n')) {
+      if (line.startsWith('#') || !line.includes('\t')) continue;
+      const [from, to] = line.split('\t');
+      if (from && to) map[from] = to.split(' ')[0];
+    }
+    console.log(`[Music] Loaded OpenCC T2S mapping: ${Object.keys(map).length} chars`);
+  } catch (err) {
+    console.warn('[Music] opencc-data not available, T2S conversion disabled:', err);
+  }
+  return map;
+})();
 
 function toSimplified(str: string): string {
   let out = '';

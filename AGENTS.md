@@ -49,13 +49,13 @@ Only `netease` and `joox` are natively supported by GD API for URL/lyric resolut
 
 `isGdSupported()` and `resolvePendingSong()` are exported from `music.ts`, shared by `playback.ts` routes. `resolvePendingSong()` needs `title` and `artist` — frontend lyrics API calls must pass them.
 
-`searchMatchForSong()` returns all candidates above threshold sorted by score. `resolvePendingSong()` returns the top candidate. `getUrl()` tries the top candidate first — if URL resolution fails (e.g. netease copyright/region block), it iterates through the remaining candidates as fallbacks (e.g. falling back to joox).
+`searchMatchForSong()` returns all candidates above threshold sorted by score. `resolvePendingSong()` returns the top candidate. `getUrl()` tries the top candidate first — if URL resolution fails (e.g. netease copyright/region block), it iterates through the remaining candidates as fallbacks, **prioritizing different sources** (e.g. falling back to joox) before trying other results from the same source.
 
 #### Song matching and traditional Chinese
 
 `matchSongScore()` in `music.ts` scores candidate songs by title+artist comparison. GD API's `tencent` source is broken/unmaintained — **do not search it**. Only `netease` and `joox` are searched.
 
-**joox returns traditional Chinese** for song titles and artist names (e.g. `周杰倫`, `擱淺`, `説好的幸福呢`). Imported songs from QQ/酷狗/酷我/咪咕 are in simplified Chinese. `matchSongScore()` uses a `toSimplified()` function with a built-in traditional→simplified character mapping (`T2S`, 250+ chars) to normalize both sides before comparison. Without this, joox results would score 0 and netease covers would always win.
+**joox returns traditional Chinese** for song titles and artist names (e.g. `周杰倫`, `擱淺`, `説好的幸福呢`). Imported songs from QQ/酷狗/酷我/咪咕 are in simplified Chinese. `matchSongScore()` uses a `toSimplified()` function with the full OpenCC `TSCharacters.txt` mapping (4100+ chars, loaded from `opencc-data` package at startup) to normalize both sides before comparison. Without this, joox results would score 0 and netease covers would always win.
 
 Scoring rules (after normalization):
 - Exact title + exact artist → 100

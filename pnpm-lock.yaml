@@ -23,6 +23,9 @@ importers:
       express:
         specifier: ^4.21.0
         version: 4.22.1
+      opencc-data:
+        specifier: ^1.3.0
+        version: 1.3.0
       sql.js:
         specifier: ^1.14.1
         version: 1.14.1
@@ -1209,6 +1212,9 @@ packages:
   on-finished@2.4.1:
     resolution: {integrity: sha512-oVlzkg3ENAhCk2zdv7IJwd/QUD4z2RxRwpkcGY8psCVcCYZNq4wYnVWALHM+brtuJjePWiYF/ClmuDr8Ch5+kg==}
     engines: {node: '>= 0.8'}
+
+  opencc-data@1.3.0:
+    resolution: {integrity: sha512-PTEIKPbiZG3SeFYQOYMvECvA1WUPdYlI2FXsM6qYCQxGf/uvfy+Ss1jLpDztHKdxrNJnHCQAHNRZIag+gsERiw==}
 
   parseurl@1.3.3:
     resolution: {integrity: sha512-CiyeOxFT/JZyN5m0z9PfXw4SCBJ6Sygz1Dpl0wqjlhDEGGBP1GnsUVEL0p63hoG1fcj3fHynXi9NYO4nWOL+qQ==}
@@ -2568,6 +2574,8 @@ snapshots:
   on-finished@2.4.1:
     dependencies:
       ee-first: 1.1.1
+
+  opencc-data@1.3.0: {}
 
   parseurl@1.3.3: {}
 
