@@ -61,6 +61,10 @@ Meting API returns songs **without `id` field** — ID is embedded in `url` (`?s
 
 Admin page queue tab supports: shuffle (`POST /queue/shuffle`), clear (`POST /queue/clear`), and drag-to-reorder (`POST /queue/reorder`). These endpoints are on the public queue routes (not admin-protected). Reorder updates `created_at` timestamps; shuffle uses Fisher-Yates on pending items.
 
+`addToQueue()` always appends to the end of the pending queue — it computes `created_at = MAX(created_at) + 1ms` to guarantee insertion at the tail. Both user song requests and admin playlist imports use this function.
+
+Admin page queue UI: desktop uses drag handle (⠿), mobile uses up/down/top buttons (`sm:hidden`/`hidden sm:block` responsive split). All use the same `reorder` endpoint.
+
 ### Playback control architecture
 
 Admin controls use a **signal-based** approach over WebSocket:
@@ -69,6 +73,8 @@ Admin controls use a **signal-based** approach over WebSocket:
 2. Player receives `skip` → calls its own `handleEnded()` (via `handleEndedRef`) → HTTP `POST /api/player/request` → `getNextSong()` → plays next
 
 This avoids stale closure issues in the player's `useCallback([], [])` WebSocket handler — the player always fetches next song via HTTP, same code path as natural auto-advance.
+
+`playSong()` uses a generation counter (`playGenRef`) to prevent concurrent playback: each call increments the counter, and when the async URL fetch resolves it checks the counter still matches — stale callbacks are discarded. This prevents the "two songs playing at once" bug when admin rapidly clicks next.
 
 `getNextSong()` priority: queue items first (mode `queue_first`), then fallback playlist (cycles with modulo), stops when nothing available.
 
