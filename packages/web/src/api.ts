@@ -70,8 +70,10 @@ export interface LyricsData {
   tlyric: string;
 }
 
-export async function getLyrics(source: string, id: string): Promise<LyricsData | null> {
+export async function getLyrics(source: string, id: string, title?: string, artist?: string): Promise<LyricsData | null> {
   const params = new URLSearchParams({ source, id });
+  if (title) params.set('title', title);
+  if (artist) params.set('artist', artist);
   const res = await fetch(`${API_BASE}/player/lyrics?${params}`);
   if (!res.ok) return null;
   return res.json();
@@ -103,7 +105,7 @@ export async function importPlaylist(
   password: string,
   url: string,
   mode: 'fallback' | 'queue'
-): Promise<{ playlist?: any; queueItems?: QueueItem[]; count: number }> {
+): Promise<{ playlist?: any; queueItems?: QueueItem[]; count: number; pendingCount: number }> {
   return adminFetch('/import-playlist', password, {
     method: 'POST',
     body: JSON.stringify({ url, mode }),

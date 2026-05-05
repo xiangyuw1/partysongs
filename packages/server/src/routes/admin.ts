@@ -62,6 +62,8 @@ router.post('/import-playlist', async (req, res) => {
     const songs = await fetchPlaylist(parsed.platform, parsed.id);
     if (songs.length === 0) return res.status(404).json({ error: '歌单内容为空或解析失败' });
 
+    const pendingCount = songs.filter((s) => !['netease', 'joox'].includes(s.source)).length;
+
     if (mode === 'fallback') {
       const platformNames: Record<string, string> = {
         netease: '网易云', tencent: 'QQ音乐', kugou: '酷狗', kuwo: '酷我', migu: '咪咕',
@@ -71,13 +73,13 @@ router.post('/import-playlist', async (req, res) => {
         songs
       );
       broadcast({ type: 'fallback_update', data: q.getFallbackPlaylists() });
-      res.json({ playlist, count: songs.length });
+      res.json({ playlist, count: songs.length, pendingCount });
     } else {
       const uid = userId || 'admin-import';
       const uname = userName || '管理员导入';
       const items = songs.map((song) => q.addToQueue(song, uid, uname));
       broadcast({ type: 'queue_update', data: q.getFullQueue() });
-      res.json({ queueItems: items, count: items.length });
+      res.json({ queueItems: items, count: items.length, pendingCount });
     }
   } catch (err: any) {
     console.error('[Admin] import-playlist error:', err);
