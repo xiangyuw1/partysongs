@@ -3,11 +3,18 @@ import type { QueueItem, Song, FallbackPlaylist, PlaybackState } from '../types.
 
 export function addToQueue(song: Song, userId: string, userName?: string): QueueItem {
   const db = getDb();
+  const maxRow = db.prepare("SELECT MAX(created_at) as max FROM queue WHERE status IN ('pending', 'playing')").get() as any;
+  let createdAt: string;
+  if (maxRow?.max) {
+    createdAt = new Date(new Date(maxRow.max).getTime() + 1).toISOString();
+  } else {
+    createdAt = new Date().toISOString();
+  }
   const stmt = db.prepare(`
-    INSERT INTO queue (song_id, source, title, artist, album, img_url, duration, user_id, user_name)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO queue (song_id, source, title, artist, album, img_url, duration, user_id, user_name, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  const result = stmt.run(song.id, song.source, song.title, song.artist, song.album ?? null, song.imgUrl ?? null, song.duration ?? null, userId, userName ?? null);
+  const result = stmt.run(song.id, song.source, song.title, song.artist, song.album ?? null, song.imgUrl ?? null, song.duration ?? null, userId, userName ?? null, createdAt);
   return getQueueItem(Number(result.lastInsertRowid))!;
 }
 
