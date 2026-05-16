@@ -99,6 +99,7 @@ router.post('/started', (req, res) => {
     songStartedAt: Date.now(),
     songDuration: duration || 0,
   });
+  broadcast({ type: 'playback_position', data: { position: 0, duration, song, isPaused: false } });
   console.log('[Playback] Song started:', song?.title, 'duration:', duration);
   res.json({ ok: true });
 });
@@ -113,6 +114,7 @@ router.post('/ended', async (_req, res) => {
     res.json(nextSong);
   } else {
     broadcast({ type: 'queue_update', data: queue.getFullQueue() });
+    broadcast({ type: 'playback_position', data: { position: 0, duration: 0, song: null, isPaused: true } });
     res.json(null);
   }
 });
