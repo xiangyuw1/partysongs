@@ -9,6 +9,7 @@
 - **备用列表** — 管理员预设歌单，用户队列为空时自动播放
 - **自动播放** — 管理员打开播放页，歌曲播完自动请求下一首
 - **实时同步** — WebSocket 广播队列和播放状态，所有客户端实时更新
+- **后台播放** — 支持 Android 息屏播放，锁屏显示播放控制
 
 ## 快速开始
 
@@ -43,6 +44,19 @@ npm run dev
 **后端** (`packages/server`)：Express、WebSocket、SQLite (better-sqlite3)、@meting/core、migu-music-api
 
 **前端** (`packages/web`)：React 19、Vite、Tailwind CSS、howler.js
+
+## 后台播放与息屏支持
+
+播放端（Player）支持 Android 设备息屏使用，适合车载等场景：
+
+| 特性 | 说明 |
+|------|------|
+| **Wake Lock** | 阻止屏幕自动休眠，手动息屏后释放 |
+| **Media Session** | 锁屏/通知栏显示歌曲信息和播放控制 |
+| **WebSocket 心跳** | 15 秒 ping/pong 保持连接活跃 |
+| **HTTP 保活** | 25 秒轮询防止后台请求被限制 |
+
+**使用方式**：在播放端点击"开始播放"即可。手动按电源键息屏后，音乐会继续播放，锁屏界面可控制切歌。
 
 ## 项目结构
 

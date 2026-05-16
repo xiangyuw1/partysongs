@@ -76,10 +76,37 @@ router.post('/url', async (req, res) => {
 router.post('/position', (req, res) => {
   const { position, duration, song, isPaused } = req.body;
   broadcast({ type: 'playback_position', data: { position, duration, song, isPaused } });
+
+  // Update playback state with timing info for timeout detection
+  if (song && duration > 0 && !isPaused) {
+    const state = queue.getPlaybackState();
+    // Only update songStartedAt if it's a new song or not set
+    if (!state.songStartedAt || state.songDuration !== duration) {
+      queue.updatePlaybackState({
+        songStartedAt: Date.now() - (position * 1000), // Calculate when song actually started
+        songDuration: duration,
+      });
+    }
+  }
+
+  res.json({ ok: true });
+});
+
+router.post('/started', (req, res) => {
+  const { song, duration } = req.body as { song: Song; duration: number };
+  // Called when a new song starts playing
+  queue.updatePlaybackState({
+    songStartedAt: Date.now(),
+    songDuration: duration || 0,
+  });
+  console.log('[Playback] Song started:', song?.title, 'duration:', duration);
   res.json({ ok: true });
 });
 
 router.post('/ended', async (_req, res) => {
+  // Clear timing info when song ends naturally
+  queue.updatePlaybackState({ songStartedAt: null, songDuration: null });
+
   const nextSong = await getNextSong();
   if (nextSong) {
     broadcast({ type: 'queue_update', data: queue.getFullQueue() });

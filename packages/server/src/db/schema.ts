@@ -28,7 +28,9 @@ CREATE TABLE IF NOT EXISTS playback_state (
   current_fallback_index INTEGER NOT NULL DEFAULT 0,
   mode TEXT NOT NULL DEFAULT 'queue_first',
   volume REAL NOT NULL DEFAULT 0.8,
-  is_playing INTEGER NOT NULL DEFAULT 0
+  is_playing INTEGER NOT NULL DEFAULT 0,
+  song_started_at INTEGER,
+  song_duration REAL
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -38,3 +40,9 @@ CREATE TABLE IF NOT EXISTS settings (
 
 INSERT OR IGNORE INTO playback_state (id) VALUES (1);
 `;
+
+// Migration for existing databases - add new columns if they don't exist
+export const migrations = [
+  `ALTER TABLE playback_state ADD COLUMN song_started_at INTEGER`,
+  `ALTER TABLE playback_state ADD COLUMN song_duration REAL`,
+];

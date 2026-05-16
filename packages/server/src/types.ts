@@ -36,6 +36,8 @@ export interface PlaybackState {
   mode: 'queue_first' | 'fallback_only';
   volume: number;
   isPlaying: boolean;
+  songStartedAt: number | null;  // timestamp when current song started playing
+  songDuration: number | null;   // duration of current song in seconds
 }
 
 export type MusicSource = 'netease' | 'joox' | 'tencent' | 'kugou' | 'kuwo' | 'migu';
@@ -46,6 +48,6 @@ export interface SearchResult {
 }
 
 export interface WsMessage {
-  type: 'queue_update' | 'playback_state' | 'fallback_update' | 'skip' | 'playback_control' | 'playback_position';
+  type: 'queue_update' | 'playback_state' | 'fallback_update' | 'skip' | 'playback_control' | 'playback_position' | 'playback_timeout';
   data: unknown;
 }

@@ -127,6 +127,8 @@ export function getPlaybackState(): PlaybackState {
     mode: row.mode,
     volume: row.volume,
     isPlaying: row.is_playing === 1,
+    songStartedAt: row.song_started_at,
+    songDuration: row.song_duration,
   };
 }
 
@@ -141,14 +143,18 @@ export function updatePlaybackState(state: Partial<PlaybackState>): void {
       current_fallback_index = ?,
       mode = ?,
       volume = ?,
-      is_playing = ?
+      is_playing = ?,
+      song_started_at = ?,
+      song_duration = ?
     WHERE id = 1
   `).run(
     merged.currentQueueItemId,
     merged.currentFallbackIndex,
     merged.mode,
     merged.volume,
-    merged.isPlaying ? 1 : 0
+    merged.isPlaying ? 1 : 0,
+    merged.songStartedAt,
+    merged.songDuration
   );
 }
 

@@ -6,6 +6,44 @@ import type { Song } from '../types.js';
 
 const router: ReturnType<typeof Router> = Router();
 
+// Playback timeout detection
+// When player is in background (Android screen off), JavaScript may be suspended
+// This server-side mechanism detects when songs should have ended and forces advance
+const PLAYBACK_TIMEOUT_BUFFER_MS = 15000; // 15 seconds buffer after expected end
+let playbackTimeoutTimer: ReturnType<typeof setInterval> | null = null;
+
+export function startPlaybackTimeoutChecker() {
+  if (playbackTimeoutTimer) return;
+
+  playbackTimeoutTimer = setInterval(() => {
+    const state = q.getPlaybackState();
+    if (!state.isPlaying || !state.songStartedAt || !state.songDuration) return;
+
+    const elapsed = Date.now() - state.songStartedAt;
+    const expectedEnd = state.songDuration * 1000 + PLAYBACK_TIMEOUT_BUFFER_MS;
+
+    if (elapsed > expectedEnd) {
+      console.log(`[Playback] Timeout detected: elapsed=${Math.round(elapsed/1000)}s, expected=${Math.round(expectedEnd/1000)}s`);
+      // Song should have ended, force advance
+      q.updatePlaybackState({ songStartedAt: null, songDuration: null });
+
+      if (state.currentQueueItemId) {
+        q.markDone(state.currentQueueItemId);
+        q.updatePlaybackState({ currentQueueItemId: null });
+      }
+      broadcast({ type: 'queue_update', data: q.getFullQueue() });
+      broadcast({ type: 'skip', data: null });
+    }
+  }, 10000); // Check every 10 seconds
+}
+
+export function stopPlaybackTimeoutChecker() {
+  if (playbackTimeoutTimer) {
+    clearInterval(playbackTimeoutTimer);
+    playbackTimeoutTimer = null;
+  }
+}
+
 function checkAdmin(req: any, res: any, next: any) {
   const password = req.headers['x-admin-password'] || req.query.password;
   if (password !== process.env.ADMIN_PASSWORD) {

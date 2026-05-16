@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, type MouseEvent, type TouchEvent } from 'react';
 import { Howl } from 'howler';
 import QRCode from 'react-qr-code';
-import { getPlayerUrl, requestNext, getLyrics, sendPlaybackPosition, type Song } from '../api';
+import { getPlayerUrl, requestNext, getLyrics, sendPlaybackPosition, notifySongStarted, type Song } from '../api';
 import { useWebSocket } from '../hooks/useWebSocket';
 
 const PLAYER_STATE_KEY = 'partysongs_player_state';
@@ -223,6 +223,13 @@ export default function Player() {
         html5: true,
         ...(formats ? { format: formats } : {}),
         onend: () => handleEnded(),
+        onload: () => {
+          // Notify server about song start for timeout detection
+          const dur = howl.duration();
+          if (dur > 0) {
+            notifySongStarted(song, dur);
+          }
+        },
         onloaderror: (_id, err) => {
           console.error('Load error:', err);
           setStatus(`播放失败: ${song.title}，跳过`);

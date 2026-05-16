@@ -10,7 +10,7 @@ import { initDb } from './db/index.js';
 import { initWs } from './services/ws.js';
 import searchRoutes from './routes/search.js';
 import queueRoutes from './routes/queue.js';
-import adminRoutes from './routes/admin.js';
+import adminRoutes, { startPlaybackTimeoutChecker } from './routes/admin.js';
 import playbackRoutes from './routes/playback.js';
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -34,6 +34,9 @@ async function main() {
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true });
   });
+
+  // Start server-side playback timeout detection
+  startPlaybackTimeoutChecker();
 
   server.listen(PORT, () => {
     console.log(`PartySongs server running on http://localhost:${PORT}`);

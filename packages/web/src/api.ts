@@ -137,3 +137,13 @@ export async function sendPlaybackPosition(data: { position: number; duration: n
     });
   } catch { /* ignore */ }
 }
+
+export async function notifySongStarted(song: Song, duration: number) {
+  try {
+    await fetch(`${API_BASE}/player/started`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ song, duration }),
+    });
+  } catch { /* ignore */ }
+}

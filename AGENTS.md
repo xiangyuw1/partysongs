@@ -29,9 +29,9 @@ pnpm workspaces monorepo with two packages:
 - `packages/server/src/services/music.ts` — Multi-source search via GD音乐台 API, URL resolution, playlist import via Meting API, lazy song resolution for non-GD sources
 - `packages/server/src/services/queue.ts` — Queue CRUD, fallback playlists, playback state
 - `packages/server/src/services/ws.ts` — WebSocket broadcast to all clients
-- `packages/server/src/routes/admin.ts` — Admin routes (x-admin-password header auth), exports `getNextSong()` used by playback routes, playlist import endpoint
-- `packages/server/src/routes/playback.ts` — Player routes: URL resolution, album art proxy, lyrics proxy (all via GD API; lyrics/pic resolve non-GD sources via `resolvePendingSong`)
-- `packages/web/src/pages/Player.tsx` — howler.js playback with scrolling lyrics display, auto-requests next song on track end
+- `packages/server/src/routes/admin.ts` — Admin routes (x-admin-password header auth), exports `getNextSong()` used by playback routes, playlist import endpoint, playback timeout detection
+- `packages/server/src/routes/playback.ts` — Player routes: URL resolution, album art proxy, lyrics proxy (all via GD API; lyrics/pic resolve non-GD sources via `resolvePendingSong`), song start notification for timeout detection
+- `packages/web/src/pages/Player.tsx` — howler.js playback with scrolling lyrics display, auto-requests next song on track end; Wake Lock + Media Session for background/screen-off playback
 - `packages/web/src/pages/Admin.tsx` — Admin control panel with queue management, fallback playlists, playback controls, playlist import UI
 - `packages/web/src/api.ts` — Frontend API client; `adminFetch()` throws on non-2xx responses with server error message
 
@@ -107,6 +107,51 @@ This avoids stale closure issues in the player's `useCallback([], [])` WebSocket
 - `skip` — admin skipped current song, player should advance
 - `playback_state` — volume/mode changes
 - `fallback_update` — fallback playlist changes
+- `ping` / `pong` — heartbeat keepalive (client sends ping, server replies pong)
+
+### Player background playback & screen-off support
+
+Player page supports Android screen-off usage (e.g. car playback). Four mechanisms work together:
+
+**1. Wake Lock API** (`Player.tsx`)
+- Requests screen wake lock on playback start to prevent auto-sleep
+- Re-acquires lock on `visibilitychange` when page becomes visible again
+- Released on component unmount; gracefully degrades on unsupported browsers
+
+**2. Media Session API** (`Player.tsx`)
+- Registers current song metadata (title, artist, album, artwork) with the OS
+- Shows playback controls on lock screen / notification shade
+- `nexttrack` action handler triggers `handleEnded()` to advance songs
+- Exposed via `window.__playerHandleEnded` for Media Session callback access
+
+**3. WebSocket heartbeat** (`useWebSocket.ts` + `ws.ts`)
+- Client sends `{ type: 'ping' }` every 15 seconds
+- Server replies `{ type: 'pong' }` immediately
+- Client monitors pong response; if not received within 10s timeout, closes socket to trigger reconnect
+- Keeps connection alive through NAT/proxy timeouts that would otherwise drop idle WebSocket
+
+**4. HTTP keepalive** (`Player.tsx`)
+- `GET /api/queue` every 25 seconds when playback is active
+- Prevents mobile browser from throttling/suspending network requests in background
+- Errors are silently ignored (connection may be temporarily unavailable)
+
+**5. Server-side playback timeout detection** (`admin.ts` + `playback.ts`)
+- Player reports song start time and duration via `POST /api/player/started`
+- Server runs 10-second interval checker comparing elapsed time vs expected duration
+- If elapsed > duration + 15s buffer, server broadcasts `skip` signal to force advance
+- Handles case where Android suspends JS and `onend` callback never fires
+- Playback state tracks `songStartedAt` and `songDuration` in database
+
+**Screen-off behavior on Android:**
+- Auto-sleep prevented by Wake Lock (if user doesn't manually lock)
+- Manual screen lock: Wake Lock released, browser enters background mode
+- HTML5 Audio continues playing (browser treats as media app)
+- Media Session shows controls on lock screen
+- WebSocket heartbeat maintains connection
+- HTTP keepalive prevents request suspension
+- Song end → `onend` callback → `handleEnded()` → `requestNext()` → next song plays
+- If JS suspended: server detects timeout → broadcasts `skip` → player resumes when visible
+- Admin can still send commands (skip, pause, etc.) via WebSocket
 
 ## Branches
 

@@ -1,7 +1,7 @@
 import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 import fs from 'node:fs';
 import path from 'node:path';
-import { schema } from './schema.js';
+import { schema, migrations } from './schema.js';
 
 const DB_PATH = path.resolve(process.cwd(), 'partysongs.db');
 
@@ -110,6 +110,15 @@ export async function initDb(): Promise<DatabaseWrapper> {
   const stmts = schema.split(';').map(s => s.trim()).filter(s => s.length > 0);
   for (const stmt of stmts) {
     db.exec(stmt + ';');
+  }
+
+  // Run migrations (ALTER TABLE) - ignore errors if columns already exist
+  for (const migration of migrations) {
+    try {
+      db.exec(migration);
+    } catch {
+      // Column already exists, ignore
+    }
   }
 
   return db;
