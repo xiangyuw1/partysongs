@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, type MouseEvent, type TouchEvent } from 'react';
-import { getQueue, removeFromQueue, clearQueue, shuffleQueue, reorderQueue, searchSongs, adminFetch, importPlaylist, type QueueItem, type Song } from '../api';
-import { getAdminPassword, setAdminPassword } from '../utils';
+import { getQueue, removeFromQueue, clearQueue, shuffleQueue, reorderQueue, searchSongs, adminFetch, importPlaylist, getLyrics, type QueueItem, type Song } from '../api';
+import { getAdminPassword, setAdminPassword, parseLrc, findCurrentLyricLine, type LyricLine } from '../utils';
 import { useWebSocket } from '../hooks/useWebSocket';
 
 function formatTime(sec: number): string {
@@ -28,6 +28,11 @@ export default function Admin() {
   const adminProgressBarRef = useRef<HTMLDivElement>(null);
   const playerPositionRef = useRef(0);
   const playerDurationRef = useRef(0);
+
+  // Lyrics state
+  const [lyrics, setLyrics] = useState<LyricLine[]>([]);
+  const lyricTextRef = useRef<HTMLDivElement>(null);
+  const lastLyricIdxRef = useRef(-2);
 
   // Fallback playlist creation
   const [fbName, setFbName] = useState('');
@@ -69,6 +74,38 @@ export default function Admin() {
   useEffect(() => {
     adminSeekingRef.current = adminSeeking;
   }, [adminSeeking]);
+
+  // Fetch lyrics when song changes
+  useEffect(() => {
+    if (!playerSong) {
+      setLyrics([]);
+      lastLyricIdxRef.current = -2;
+      return;
+    }
+    setLyrics([]);
+    lastLyricIdxRef.current = -2;
+    getLyrics(playerSong.source, playerSong.id, playerSong.title, playerSong.artist).then((data) => {
+      if (data?.lyric) {
+        setLyrics(parseLrc(data.lyric));
+      }
+    }).catch(() => {});
+  }, [playerSong?.source, playerSong?.id]);
+
+  // Update current lyric line when position changes
+  useEffect(() => {
+    if (lyrics.length === 0) {
+      if (lyricTextRef.current) lyricTextRef.current.textContent = '';
+      lastLyricIdxRef.current = -2;
+      return;
+    }
+    const idx = findCurrentLyricLine(lyrics, playerPosition);
+    if (idx !== lastLyricIdxRef.current) {
+      lastLyricIdxRef.current = idx;
+      if (lyricTextRef.current) {
+        lyricTextRef.current.textContent = idx >= 0 ? lyrics[idx].text : '';
+      }
+    }
+  }, [playerPosition, lyrics]);
 
   useEffect(() => {
     if (!connected || !loggedIn) return;
@@ -385,6 +422,7 @@ export default function Admin() {
             <span>{formatTime(playerPosition)}</span>
             <span>{formatTime(playerDuration)}</span>
           </div>
+          <div ref={lyricTextRef} className="mt-2 text-center text-sm text-slate-300 truncate min-h-[1.25rem]" />
         </div>
       </div>
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { searchSongs, addToQueue, getQueue, type Song, type QueueItem } from '../api';
-import { getUserId, getUserName, setUserName } from '../utils';
+import { searchSongs, addToQueue, getQueue, getLyrics, type Song, type QueueItem } from '../api';
+import { getUserId, getUserName, setUserName, parseLrc, findCurrentLyricLine, type LyricLine } from '../utils';
 import { useWebSocket } from '../hooks/useWebSocket';
 
 const SOURCE_OPTIONS = [
@@ -33,13 +33,33 @@ export default function Guest() {
   const [name, setName] = useState(getUserName());
   const [toast, setToast] = useState('');
   const [playback, setPlayback] = useState<PlaybackData | null>(null);
+  const [lyrics, setLyrics] = useState<LyricLine[]>([]);
   const progressRef = useRef<HTMLDivElement>(null);
   const posTextRef = useRef<HTMLSpanElement>(null);
+  const lyricTextRef = useRef<HTMLDivElement>(null);
+  const lastLyricIdxRef = useRef(-2);
   const rafRef = useRef(0);
 
   useEffect(() => {
     getQueue().then(setQueue).catch(() => {});
   }, []);
+
+  // Fetch lyrics when song changes
+  useEffect(() => {
+    const song = playback?.song;
+    if (!song) {
+      setLyrics([]);
+      lastLyricIdxRef.current = -2;
+      return;
+    }
+    setLyrics([]);
+    lastLyricIdxRef.current = -2;
+    getLyrics(song.source, song.id, song.title, song.artist).then((data) => {
+      if (data?.lyric) {
+        setLyrics(parseLrc(data.lyric));
+      }
+    }).catch(() => {});
+  }, [playback?.song?.source, playback?.song?.id]);
 
   const handleWs = useCallback((msg: { type: string; data: unknown }) => {
     if (msg.type === 'queue_update') {
@@ -90,6 +110,16 @@ export default function Guest() {
       if (posTextRef.current && playback) {
         posTextRef.current.textContent = formatTime(playback.position);
       }
+      // Update lyric for paused/static position
+      if (playback && lyrics.length > 0) {
+        const idx = findCurrentLyricLine(lyrics, playback.position);
+        if (idx !== lastLyricIdxRef.current) {
+          lastLyricIdxRef.current = idx;
+          if (lyricTextRef.current) {
+            lyricTextRef.current.textContent = idx >= 0 ? lyrics[idx].text : '';
+          }
+        }
+      }
       return;
     }
 
@@ -104,12 +134,22 @@ export default function Guest() {
       if (posTextRef.current) {
         posTextRef.current.textContent = formatTime(pos);
       }
+      // Update current lyric line
+      if (lyrics.length > 0) {
+        const idx = findCurrentLyricLine(lyrics, pos);
+        if (idx !== lastLyricIdxRef.current) {
+          lastLyricIdxRef.current = idx;
+          if (lyricTextRef.current) {
+            lyricTextRef.current.textContent = idx >= 0 ? lyrics[idx].text : '';
+          }
+        }
+      }
       rafRef.current = requestAnimationFrame(tick);
     }
 
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [playback]);
+  }, [playback, lyrics]);
 
   return (
     <div className="max-w-2xl mx-auto p-4">
@@ -176,6 +216,7 @@ export default function Guest() {
             </div>
             <span className="w-10 tabular-nums">{formatTime(playback.duration)}</span>
           </div>
+          <div ref={lyricTextRef} className="mt-2 text-center text-sm text-slate-300 truncate min-h-[1.25rem]" />
         </div>
       )}
 

@@ -3,6 +3,7 @@ import { Howl } from 'howler';
 import QRCode from 'react-qr-code';
 import { getPlayerUrl, requestNext, getLyrics, sendPlaybackPosition, notifySongStarted, type Song } from '../api';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { parseLrc, findCurrentLyricLine, type LyricLine } from '../utils';
 
 const PLAYER_STATE_KEY = 'partysongs_player_state';
 
@@ -74,29 +75,6 @@ function formatTime(sec: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-interface LyricLine {
-  time: number;
-  text: string;
-}
-
-function parseLrc(lrc: string): LyricLine[] {
-  const lines: LyricLine[] = [];
-  for (const raw of lrc.split('\n')) {
-    const matches = [...raw.matchAll(/\[(\d{2}):(\d{2})\.(\d{2,3})\]/g)];
-    if (!matches.length) continue;
-    const text = raw.replace(/\[\d{2}:\d{2}\.\d{2,3}\]/g, '').trim();
-    if (!text) continue;
-    for (const m of matches) {
-      const min = parseInt(m[1], 10);
-      const sec = parseInt(m[2], 10);
-      const ms = parseInt(m[3].padEnd(3, '0'), 10);
-      lines.push({ time: min * 60 + sec + ms / 1000, text });
-    }
-  }
-  lines.sort((a, b) => a.time - b.time);
-  return lines;
-}
-
 export default function Player() {
   const guestUrl = useMemo(() => `${window.location.origin}/guest`, []);
 
@@ -150,13 +128,7 @@ export default function Player() {
         setDuration(howl.duration());
         if (playingRef.current) {
           const lines = lyricsRef.current;
-          let idx = -1;
-          for (let i = lines.length - 1; i >= 0; i--) {
-            if (t >= lines[i].time) {
-              idx = i;
-              break;
-            }
-          }
+          const idx = findCurrentLyricLine(lines, t);
           setActiveLine((prev) => (idx !== prev ? idx : prev));
         }
         const now = performance.now();
