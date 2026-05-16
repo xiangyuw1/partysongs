@@ -9,6 +9,17 @@ export function initWs(server: Server): WebSocketServer {
 
   wss.on('connection', (ws) => {
     console.log('[WS] client connected, total:', wss!.clients.size);
+
+    ws.on('message', (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+        // Respond to heartbeat ping
+        if (msg.type === 'ping') {
+          ws.send(JSON.stringify({ type: 'pong' }));
+        }
+      } catch { /* ignore invalid messages */ }
+    });
+
     ws.on('close', () => {
       console.log('[WS] client disconnected, total:', wss!.clients.size);
     });

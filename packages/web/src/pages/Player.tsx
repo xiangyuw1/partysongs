@@ -6,6 +6,67 @@ import { useWebSocket } from '../hooks/useWebSocket';
 
 const PLAYER_STATE_KEY = 'partysongs_player_state';
 
+// Wake Lock to prevent screen from sleeping
+let wakeLock: WakeLockSentinel | null = null;
+
+async function requestWakeLock() {
+  try {
+    if ('wakeLock' in navigator) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      console.log('[WakeLock] Screen wake lock acquired');
+      wakeLock.addEventListener('release', () => {
+        console.log('[WakeLock] Screen wake lock released');
+        wakeLock = null;
+      });
+    }
+  } catch (err) {
+    console.warn('[WakeLock] Failed to acquire:', err);
+  }
+}
+
+function releaseWakeLock() {
+  if (wakeLock) {
+    wakeLock.release();
+    wakeLock = null;
+  }
+}
+
+// Media Session API for background playback support
+function updateMediaSession(song: Song | null, howl?: Howl | null) {
+  if (!('mediaSession' in navigator)) return;
+
+  if (!song) {
+    navigator.mediaSession.metadata = null;
+    return;
+  }
+
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: song.title,
+    artist: song.artist,
+    album: song.album || '',
+    artwork: song.imgUrl ? [{ src: song.imgUrl, sizes: '300x300', type: 'image/jpeg' }] : [],
+  });
+
+  // Action handlers for lock screen / notification controls
+  navigator.mediaSession.setActionHandler('play', () => {
+    if (howl && !howl.playing()) {
+      howl.play();
+    }
+  });
+  navigator.mediaSession.setActionHandler('pause', () => {
+    if (howl && howl.playing()) {
+      howl.pause();
+    }
+  });
+  navigator.mediaSession.setActionHandler('previoustrack', null);
+  navigator.mediaSession.setActionHandler('nexttrack', () => {
+    // Trigger handleEnded to advance to next song
+    if (typeof (window as any).__playerHandleEnded === 'function') {
+      (window as any).__playerHandleEnded();
+    }
+  });
+}
+
 function formatTime(sec: number): string {
   if (!isFinite(sec) || sec < 0) return '0:00';
   const m = Math.floor(sec / 60);
@@ -173,6 +234,9 @@ export default function Player() {
       playingRef.current = true;
       pausedRef.current = false;
       howl.play();
+
+      // Update Media Session for background playback
+      updateMediaSession(song, howl);
       if (seekTo != null && seekTo > 0) {
         howl.seek(seekTo);
       }
@@ -227,6 +291,7 @@ export default function Player() {
 
   async function handleEnded() {
     stopCurrent();
+    updateMediaSession(null); // Clear media session
     try { localStorage.removeItem(PLAYER_STATE_KEY); } catch { /* ignore */ }
     setStatus('请求下一首...');
     try {
@@ -250,6 +315,8 @@ export default function Player() {
   }
 
   handleEndedRef.current = handleEnded;
+  // Expose handleEnded for Media Session nexttrack handler
+  (window as any).__playerHandleEnded = handleEnded;
   togglePauseRef.current = togglePause;
 
   function reportPosition() {
@@ -355,6 +422,7 @@ export default function Player() {
 
   function handleStart() {
     setStarted(true);
+    requestWakeLock();
 
     let saved: { song: Song; position: number } | null = null;
     try {
@@ -383,7 +451,59 @@ export default function Player() {
   }
 
   useEffect(() => {
-    return () => stopCurrent();
+    // Handle visibility change to re-acquire wake lock
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible' && startedRef.current) {
+        requestWakeLock();
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Background keepalive - send periodic requests to prevent connection timeout
+    // This helps maintain connectivity when screen is off on Android
+    let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+
+    function startKeepalive() {
+      if (keepaliveTimer) return;
+      keepaliveTimer = setInterval(async () => {
+        try {
+          // Lightweight request to keep connection alive
+          await fetch('/api/queue', { method: 'GET' });
+        } catch {
+          // Ignore errors - connection might be temporarily unavailable
+        }
+      }, 25000); // Every 25 seconds
+    }
+
+    function stopKeepalive() {
+      if (keepaliveTimer) {
+        clearInterval(keepaliveTimer);
+        keepaliveTimer = null;
+      }
+    }
+
+    // Start keepalive when playback starts
+    if (startedRef.current) {
+      startKeepalive();
+    }
+
+    // Listen for started state changes via a MutationObserver-like approach
+    // We'll use a simpler polling approach since we have access to startedRef
+    const startedCheckInterval = setInterval(() => {
+      if (startedRef.current && !keepaliveTimer) {
+        startKeepalive();
+      } else if (!startedRef.current && keepaliveTimer) {
+        stopKeepalive();
+      }
+    }, 1000);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      clearInterval(startedCheckInterval);
+      stopKeepalive();
+      releaseWakeLock();
+      stopCurrent();
+    };
   }, []);
 
   if (!started) {
