@@ -129,4 +129,36 @@ router.post('/request', async (_req, res) => {
   }
 });
 
+// Check if current song should have ended (for recovery after background suspension)
+router.get('/check-ended', (_req, res) => {
+  const state = queue.getPlaybackState();
+
+  if (!state.isPlaying || !state.songStartedAt || !state.songDuration) {
+    // No active playback or missing timing info
+    return res.json({ shouldAdvance: false, reason: 'no_active_playback' });
+  }
+
+  const elapsed = (Date.now() - state.songStartedAt) / 1000;
+  const bufferSeconds = 5; // Small buffer for timing imprecision
+
+  if (elapsed >= state.songDuration + bufferSeconds) {
+    // Song should have ended
+    return res.json({
+      shouldAdvance: true,
+      reason: 'timeout',
+      elapsed: Math.round(elapsed),
+      duration: Math.round(state.songDuration),
+    });
+  }
+
+  // Song is still playing
+  return res.json({
+    shouldAdvance: false,
+    reason: 'still_playing',
+    elapsed: Math.round(elapsed),
+    duration: Math.round(state.songDuration),
+    remaining: Math.round(state.songDuration - elapsed),
+  });
+});
+
 export default router;

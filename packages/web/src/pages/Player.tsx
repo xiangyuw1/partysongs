@@ -242,6 +242,21 @@ export default function Player() {
       pausedRef.current = false;
       howl.play();
 
+      // Add direct Audio element listener for reliable background playback
+      // The native 'ended' event fires even when JS is throttled in background
+      // This bypasses Howler.js callback chain which may break when suspended
+      const audioNode = (howl as any)._sounds?.[0]?._node as HTMLAudioElement | undefined;
+      if (audioNode) {
+        const onNativeEnded = () => {
+          console.log('[Player] Native audio ended event fired');
+          audioNode.removeEventListener('ended', onNativeEnded);
+          handleEndedRef.current();
+        };
+        audioNode.addEventListener('ended', onNativeEnded);
+        // Store for cleanup
+        (howl as any).__nativeEndedListener = onNativeEnded;
+      }
+
       // Update Media Session for background playback
       updateMediaSession(song, howl);
       if (seekTo != null && seekTo > 0) {
@@ -259,6 +274,14 @@ export default function Player() {
   function stopCurrent() {
     cancelAnimationFrame(rafRef.current);
     if (howlRef.current) {
+      // Clean up native audio listener if exists
+      const listener = (howlRef.current as any).__nativeEndedListener;
+      if (listener) {
+        const audioNode = (howlRef.current as any)._sounds?.[0]?._node as HTMLAudioElement | undefined;
+        if (audioNode) {
+          audioNode.removeEventListener('ended', listener);
+        }
+      }
       howlRef.current.stop();
       howlRef.current.unload();
       howlRef.current = null;
@@ -458,10 +481,27 @@ export default function Player() {
   }
 
   useEffect(() => {
-    // Handle visibility change to re-acquire wake lock
-    function handleVisibilityChange() {
+    // Handle visibility change to re-acquire wake lock and sync playback state
+    async function handleVisibilityChange() {
       if (document.visibilityState === 'visible' && startedRef.current) {
         requestWakeLock();
+
+        // Check if song should have ended while we were suspended
+        try {
+          const res = await fetch('/api/player/check-ended');
+          const data = await res.json();
+
+          if (data.shouldAdvance) {
+            console.log('[Player] Song should have ended while suspended, requesting next');
+            // Song ended while we were in background - request next
+            handleEndedRef.current();
+          } else if (data.reason === 'still_playing') {
+            console.log(`[Player] Song still playing, ${data.remaining}s remaining`);
+            // Optionally sync the position
+          }
+        } catch {
+          // Ignore errors - server might be temporarily unavailable
+        }
       }
     }
     document.addEventListener('visibilitychange', handleVisibilityChange);

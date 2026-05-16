@@ -30,8 +30,8 @@ pnpm workspaces monorepo with two packages:
 - `packages/server/src/services/queue.ts` — Queue CRUD, fallback playlists, playback state
 - `packages/server/src/services/ws.ts` — WebSocket broadcast to all clients
 - `packages/server/src/routes/admin.ts` — Admin routes (x-admin-password header auth), exports `getNextSong()` used by playback routes, playlist import endpoint, playback timeout detection
-- `packages/server/src/routes/playback.ts` — Player routes: URL resolution, album art proxy, lyrics proxy (all via GD API; lyrics/pic resolve non-GD sources via `resolvePendingSong`), song start notification for timeout detection, playback position broadcast to all clients
-- `packages/web/src/pages/Player.tsx` — howler.js playback with scrolling lyrics display, auto-requests next song on track end; Wake Lock + Media Session for background/screen-off playback
+- `packages/server/src/routes/playback.ts` — Player routes: URL resolution, album art proxy, lyrics proxy (all via GD API; lyrics/pic resolve non-GD sources via `resolvePendingSong`), song start notification for timeout detection, playback position broadcast to all clients, `GET /check-ended` for recovery after background suspension
+- `packages/web/src/pages/Player.tsx` — howler.js playback with scrolling lyrics display, auto-requests next song on track end; Wake Lock + Media Session for background/screen-off playback; native Audio `ended` event listener for reliable background advancement; `visibilitychange` recovery with server state check
 - `packages/web/src/pages/Admin.tsx` — Admin control panel with queue management, fallback playlists, playback controls, playlist import UI
 - `packages/web/src/pages/Guest.tsx` — Guest song request page with search, queue display, and read-only playback progress bar (receives `playback_position` WebSocket broadcasts, animates smoothly via requestAnimationFrame)
 - `packages/web/src/api.ts` — Frontend API client; `adminFetch()` throws on non-2xx responses with server error message
@@ -113,47 +113,42 @@ This avoids stale closure issues in the player's `useCallback([], [])` WebSocket
 
 ### Player background playback & screen-off support
 
-Player page supports Android screen-off usage (e.g. car playback). Four mechanisms work together:
+Player page supports Android screen-off usage (e.g. car playback). **Multi-layered defense** approach:
 
-**1. Wake Lock API** (`Player.tsx`)
-- Requests screen wake lock on playback start to prevent auto-sleep
-- Re-acquires lock on `visibilitychange` when page becomes visible again
-- Released on component unmount; gracefully degrades on unsupported browsers
+**Layer 1: Native Audio `ended` event** (`Player.tsx`)
+- Direct listener on HTMLAudioElement, bypasses Howler.js callback chain
+- Native media events fire even when JS is throttled in background
+- Added after `howl.play()` via `howl._sounds[0]._node`
 
-**2. Media Session API** (`Player.tsx`)
-- Registers current song metadata (title, artist, album, artwork) with the OS
-- Shows playback controls on lock screen / notification shade
-- `nexttrack` action handler triggers `handleEnded()` to advance songs
-- Exposed via `window.__playerHandleEnded` for Media Session callback access
+**Layer 2: Howler.js `onend` callback** (`Player.tsx`)
+- Standard callback path, works when JS is active
+- Backup to Layer 1 if native listener fails
 
-**3. WebSocket heartbeat** (`useWebSocket.ts` + `ws.ts`)
-- Client sends `{ type: 'ping' }` every 15 seconds
-- Server replies `{ type: 'pong' }` immediately
-- Client monitors pong response; if not received within 10s timeout, closes socket to trigger reconnect
-- Keeps connection alive through NAT/proxy timeouts that would otherwise drop idle WebSocket
+**Layer 3: `visibilitychange` + server check** (`Player.tsx`)
+- When page becomes visible after background, calls `GET /api/player/check-ended`
+- Server compares `songStartedAt + songDuration` vs current time
+- If song should have ended, frontend calls `handleEnded()` to advance
+- Handles case where ALL JS was suspended (Android deep sleep)
 
-**4. HTTP keepalive** (`Player.tsx`)
-- `GET /api/queue` every 25 seconds when playback is active
-- Prevents mobile browser from throttling/suspending network requests in background
-- Errors are silently ignored (connection may be temporarily unavailable)
+**Layer 4: Server-side timeout detection** (`admin.ts`)
+- Server runs 10-second interval checker
+- If elapsed > duration + 15s buffer, broadcasts `skip` signal
+- Catches cases where player is completely unresponsive
 
-**5. Server-side playback timeout detection** (`admin.ts` + `playback.ts`)
-- Player reports song start time and duration via `POST /api/player/started`
-- Server runs 10-second interval checker comparing elapsed time vs expected duration
-- If elapsed > duration + 15s buffer, server broadcasts `skip` signal to force advance
-- Handles case where Android suspends JS and `onend` callback never fires
-- Playback state tracks `songStartedAt` and `songDuration` in database
+**Supporting mechanisms:**
+- **Wake Lock API** — prevents auto-sleep; re-acquires on `visibilitychange`
+- **Media Session API** — lock screen controls; `nexttrack` triggers `handleEnded()`
+- **WebSocket heartbeat** — 15s ping/pong keeps connection alive
+- **HTTP keepalive** — 25s GET /api/queue prevents request suspension
 
 **Screen-off behavior on Android:**
 - Auto-sleep prevented by Wake Lock (if user doesn't manually lock)
 - Manual screen lock: Wake Lock released, browser enters background mode
 - HTML5 Audio continues playing (browser treats as media app)
 - Media Session shows controls on lock screen
-- WebSocket heartbeat maintains connection
-- HTTP keepalive prevents request suspension
-- Song end → `onend` callback → `handleEnded()` → `requestNext()` → next song plays
-- If JS suspended: server detects timeout → broadcasts `skip` → player resumes when visible
-- Admin can still send commands (skip, pause, etc.) via WebSocket
+- Song end → native `ended` event fires → `handleEnded()` → next song
+- If JS suspended: page visible → check server → advance if needed
+- Admin can still send commands via WebSocket (player processes when visible)
 
 ## Branches
 
