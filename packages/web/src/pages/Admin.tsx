@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef, type MouseEvent, type TouchEvent } from 'react';
-import { getQueue, removeFromQueue, clearQueue, shuffleQueue, reorderQueue, searchSongs, adminFetch, importPlaylist, getLyrics, type QueueItem, type Song } from '../api';
-import { getAdminPassword, setAdminPassword, parseLrc, findCurrentLyricLine, type LyricLine } from '../utils';
+import { getQueue, removeFromQueue, clearQueue, shuffleQueue, reorderQueue, searchSongs, adminFetch, type QueueItem, type Song } from '../api';
+import { getAdminPassword, setAdminPassword } from '../utils';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { usePlaybackSync } from '../hooks/usePlaybackSync';
 
 function formatTime(sec: number): string {
   if (!isFinite(sec) || sec < 0) return '0:00';
@@ -18,21 +19,23 @@ export default function Admin() {
   const [playlists, setPlaylists] = useState<any[]>([]);
   const [tab, setTab] = useState<'queue' | 'fallback' | 'settings'>('queue');
 
-  // Player sync state
-  const [playerPosition, setPlayerPosition] = useState(0);
-  const [playerDuration, setPlayerDuration] = useState(0);
-  const [playerSong, setPlayerSong] = useState<Song | null>(null);
-  const [playerPaused, setPlayerPaused] = useState(true);
+  // Shared playback sync — handles interpolation + lyrics
+  const {
+    song: playerSong,
+    position: playerPosition,
+    duration: playerDuration,
+    isPaused: playerPaused,
+    currentLyricText,
+    handleSync,
+    setOverridePosition,
+  } = usePlaybackSync();
+
+  // Admin seeking state
   const [adminSeeking, setAdminSeeking] = useState(false);
   const adminSeekValueRef = useRef(0);
   const adminProgressBarRef = useRef<HTMLDivElement>(null);
-  const playerPositionRef = useRef(0);
-  const playerDurationRef = useRef(0);
-
-  // Lyrics state
-  const [lyrics, setLyrics] = useState<LyricLine[]>([]);
-  const lyricTextRef = useRef<HTMLDivElement>(null);
-  const lastLyricIdxRef = useRef(-2);
+  const passwordRef = useRef(password);
+  passwordRef.current = password;
 
   // Fallback playlist creation
   const [fbName, setFbName] = useState('');
@@ -55,58 +58,12 @@ export default function Admin() {
     if (msg.type === 'queue_update') setQueue(msg.data as QueueItem[]);
     if (msg.type === 'fallback_update') setPlaylists(msg.data as any[]);
     if (msg.type === 'playback_position') {
-      const d = msg.data as { position: number; duration: number; song: Song | null; isPaused: boolean };
-      playerPositionRef.current = d.position;
-      playerDurationRef.current = d.duration;
-      if (!adminSeekingRef.current) {
-        setPlayerPosition(d.position);
-      }
-      setPlayerDuration(d.duration);
-      setPlayerSong(d.song);
-      setPlayerPaused(d.isPaused);
+      handleSync(msg.data as { position: number; duration: number; song: Song | null; isPaused: boolean });
     }
-  }, []);
+  }, [handleSync]);
   const { connected } = useWebSocket(handleWs);
-  const passwordRef = useRef(password);
-  passwordRef.current = password;
-  const adminSeekingRef = useRef(false);
 
-  useEffect(() => {
-    adminSeekingRef.current = adminSeeking;
-  }, [adminSeeking]);
-
-  // Fetch lyrics when song changes
-  useEffect(() => {
-    if (!playerSong) {
-      setLyrics([]);
-      lastLyricIdxRef.current = -2;
-      return;
-    }
-    setLyrics([]);
-    lastLyricIdxRef.current = -2;
-    getLyrics(playerSong.source, playerSong.id, playerSong.title, playerSong.artist).then((data) => {
-      if (data?.lyric) {
-        setLyrics(parseLrc(data.lyric));
-      }
-    }).catch(() => {});
-  }, [playerSong?.source, playerSong?.id]);
-
-  // Update current lyric line when position changes
-  useEffect(() => {
-    if (lyrics.length === 0) {
-      if (lyricTextRef.current) lyricTextRef.current.textContent = '';
-      lastLyricIdxRef.current = -2;
-      return;
-    }
-    const idx = findCurrentLyricLine(lyrics, playerPosition);
-    if (idx !== lastLyricIdxRef.current) {
-      lastLyricIdxRef.current = idx;
-      if (lyricTextRef.current) {
-        lyricTextRef.current.textContent = idx >= 0 ? lyrics[idx].text : '';
-      }
-    }
-  }, [playerPosition, lyrics]);
-
+  // Periodically request player to report position (for late-joining admin clients)
   useEffect(() => {
     if (!connected || !loggedIn) return;
     adminFetch('/playback', passwordRef.current, {
@@ -213,7 +170,7 @@ export default function Admin() {
     const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
     const seekTo = ratio * playerDuration;
     adminSeekValueRef.current = seekTo;
-    setPlayerPosition(seekTo);
+    setOverridePosition(seekTo);
   }
 
   useEffect(() => {
@@ -221,17 +178,18 @@ export default function Admin() {
 
     function handleMove(e: globalThis.MouseEvent | globalThis.TouchEvent) {
       const bar = adminProgressBarRef.current;
-      if (!bar || playerDurationRef.current <= 0) return;
+      if (!bar || playerDuration <= 0) return;
       const rect = bar.getBoundingClientRect();
       const clientX = 'touches' in e ? (e as globalThis.TouchEvent).touches[0]?.clientX ?? (e as globalThis.TouchEvent).changedTouches[0]?.clientX : (e as globalThis.MouseEvent).clientX;
       const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      const seekTo = ratio * playerDurationRef.current;
+      const seekTo = ratio * playerDuration;
       adminSeekValueRef.current = seekTo;
-      setPlayerPosition(seekTo);
+      setOverridePosition(seekTo);
     }
 
     function handleUp() {
       handleAdminSeek(adminSeekValueRef.current);
+      setOverridePosition(null);
       setAdminSeeking(false);
     }
 
@@ -245,7 +203,7 @@ export default function Admin() {
       document.removeEventListener('touchmove', handleMove);
       document.removeEventListener('touchend', handleUp);
     };
-  }, [adminSeeking]);
+  }, [adminSeeking, playerDuration, setOverridePosition]);
 
   async function handleActivateFallback(id: number) {
     await adminFetch(`/fallback/${id}/activate`, password, { method: 'PUT' });
@@ -275,21 +233,25 @@ export default function Admin() {
     setFbSongs([...fbSongs, song]);
   }
 
-  function removeSongFromFallback(idx: number) {
-    setFbSongs(fbSongs.filter((_, i) => i !== idx));
+  function removeSongFromFallback(index: number) {
+    setFbSongs(fbSongs.filter((_, i) => i !== index));
   }
 
-  async function handleSaveFallback() {
+  async function handleCreateFallback() {
     if (!fbName.trim() || fbSongs.length === 0) return;
-    await adminFetch('/fallback', password, {
-      method: 'POST',
-      body: JSON.stringify({ name: fbName, songs: fbSongs }),
-    });
-    setFbName('');
-    setFbSongs([]);
-    setFbQuery('');
-    setFbResults([]);
-    loadData();
+    try {
+      await adminFetch('/fallback', password, {
+        method: 'POST',
+        body: JSON.stringify({ name: fbName.trim(), songs: fbSongs }),
+      });
+      setFbName('');
+      setFbSongs([]);
+      setFbResults([]);
+      setFbQuery('');
+      loadData();
+    } catch (e: any) {
+      alert(e.message || '创建失败');
+    }
   }
 
   async function handleImportPlaylist() {
@@ -297,95 +259,66 @@ export default function Admin() {
     setImporting(true);
     setImportError('');
     try {
-      const result = await importPlaylist(password, importUrl.trim(), importMode);
+      await adminFetch('/import-playlist', password, {
+        method: 'POST',
+        body: JSON.stringify({ url: importUrl.trim(), mode: importMode }),
+      });
       setImportUrl('');
-      if (result.pendingCount && result.pendingCount > 0) {
-        setImportError(`已导入 ${result.count} 首，其中 ${result.pendingCount} 首将在播放时自动匹配音源`);
-        setTimeout(() => setImportError(''), 5000);
-      }
       loadData();
-      if (importMode === 'queue') {
-        setTab('queue');
-      }
     } catch (e: any) {
       setImportError(e.message || '导入失败');
-    } finally {
-      setImporting(false);
     }
+    setImporting(false);
   }
 
   if (!loggedIn) {
     return (
-      <div className="max-w-sm mx-auto p-4 mt-20">
-        <h2 className="text-xl font-bold mb-4">管理员登录</h2>
-        <input
-          type="password"
-          placeholder="输入管理密码"
-          value={password}
-          onChange={(e) => { setPassword(e.target.value); setLoginError(''); }}
-          onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-          className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 mb-3"
-        />
-        {loginError && (
-          <p className="text-red-400 text-sm mb-3">{loginError}</p>
-        )}
-        <button onClick={handleLogin} className="w-full bg-purple-600 hover:bg-purple-700 py-2 rounded-lg font-medium">
-          登录
-        </button>
+      <div className="max-w-md mx-auto p-4">
+        <h1 className="text-xl font-bold mb-4">管理员登录</h1>
+        <div className="flex gap-2">
+          <input
+            type="password"
+            placeholder="输入管理密码"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+            className="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-4 py-2"
+          />
+          <button onClick={handleLogin} className="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg">
+            登录
+          </button>
+        </div>
+        {loginError && <p className="text-red-400 text-sm mt-2">{loginError}</p>}
       </div>
     );
   }
 
   return (
-    <div className="max-w-3xl mx-auto p-4">
-      {/* Playback control bar */}
-      <div className="bg-slate-800 rounded-xl p-4 mb-4">
-        <div className="flex items-center gap-4">
-          {playerSong?.imgUrl && (
-            <img
-              src={playerSong.imgUrl}
-              alt={playerSong.title}
-              className="w-14 h-14 rounded-lg object-cover flex-shrink-0"
-            />
+    <div className="max-w-2xl mx-auto p-4">
+      {/* Now playing */}
+      <div className="mb-4 bg-slate-800 rounded-lg p-3 border border-slate-700">
+        <div className="flex items-center gap-3 mb-2">
+          {playerSong?.imgUrl ? (
+            <img src={playerSong.imgUrl} alt="" className="w-10 h-10 rounded object-cover" />
+          ) : (
+            <div className="w-10 h-10 rounded bg-slate-700 flex items-center justify-center text-slate-500">♪</div>
           )}
           <div className="flex-1 min-w-0">
-            {playerSong ? (
-              <>
-                <p className="font-medium text-sm truncate">{playerSong.title}</p>
-                <p className="text-xs text-slate-400 truncate">{playerSong.artist}</p>
-              </>
-            ) : (
-              <p className="text-sm text-slate-500">未在播放</p>
-            )}
+            <div className="truncate font-medium text-sm">{playerSong?.title ?? '未在播放'}</div>
+            <div className="truncate text-xs text-slate-400">{playerSong?.artist ?? ''}</div>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex gap-2">
             <button
               onClick={handlePauseResume}
-              className="w-9 h-9 flex items-center justify-center rounded-full bg-purple-600 hover:bg-purple-700 transition-colors"
-              title={!playerSong ? '开始播放' : playerPaused ? '继续播放' : '暂停'}
+              className="px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded text-sm"
             >
-              {!playerSong ? (
-                <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 text-white ml-0.5">
-                  <path d="M8 5v14l11-7z" />
-                </svg>
-              ) : playerPaused ? (
-                <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 text-white ml-0.5">
-                  <path d="M8 5v14l11-7z" />
-                </svg>
-              ) : (
-                <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 text-white">
-                  <path d="M6 4h4v16H6zM14 4h4v16h-4z" />
-                </svg>
-              )}
+              {playerPaused ? '▶' : '⏸'}
             </button>
             <button
               onClick={handleNext}
-              className="w-9 h-9 flex items-center justify-center rounded-full bg-slate-700 hover:bg-slate-600 border border-slate-600 transition-colors"
-              title="下一首"
+              className="px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded text-sm"
             >
-              <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 text-white">
-                <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
-              </svg>
+              ⏭
             </button>
           </div>
         </div>
@@ -422,7 +355,9 @@ export default function Admin() {
             <span>{formatTime(playerPosition)}</span>
             <span>{formatTime(playerDuration)}</span>
           </div>
-          <div ref={lyricTextRef} className="mt-2 text-center text-sm text-slate-300 truncate min-h-[1.25rem]" />
+          <div className="mt-2 text-center text-sm text-slate-300 truncate min-h-[1.25rem]">
+            {currentLyricText}
+          </div>
         </div>
       </div>
 
@@ -458,24 +393,17 @@ export default function Admin() {
             </div>
           )}
           <div className="space-y-1">
-            {(() => {
-              const visible = queue.filter(q => q.status !== 'done' && q.status !== 'skipped');
-              const pendingItems = visible.filter(q => q.status === 'pending');
-              return visible.map((item) => {
-                const pendingIdx = pendingItems.findIndex(p => p.id === item.id);
-                const canUp = item.status === 'pending' && pendingIdx > 0;
-                const canDown = item.status === 'pending' && pendingIdx < pendingItems.length - 1;
-                return (
+            {queue.filter(q => q.status !== 'done' && q.status !== 'skipped').map((item) => (
               <div
                 key={item.id}
                 draggable={item.status === 'pending'}
                 onDragStart={() => item.status === 'pending' && setDragId(item.id)}
                 onDragOver={(e) => {
-                  if (item.status !== 'pending') return;
-                  e.preventDefault();
-                  setDragOverId(item.id);
+                  if (item.status === 'pending') {
+                    e.preventDefault();
+                    setDragOverId(item.id);
+                  }
                 }}
-                onDragLeave={() => setDragOverId(null)}
                 onDrop={() => {
                   if (dragId !== null && item.status === 'pending') {
                     handleReorder(dragId, item.id);
@@ -483,195 +411,218 @@ export default function Admin() {
                   setDragId(null);
                   setDragOverId(null);
                 }}
-                onDragEnd={() => { setDragId(null); setDragOverId(null); }}
-                className={`flex items-center gap-2 rounded-lg p-3 text-sm transition-opacity ${
-                  item.status === 'playing' ? 'bg-purple-900/50 border border-purple-600' :
-                  dragOverId === item.id ? 'bg-slate-700 border border-purple-400' :
-                  'bg-slate-800'
-                } ${dragId === item.id ? 'opacity-40' : ''}`}
+                onDragEnd={() => {
+                  setDragId(null);
+                  setDragOverId(null);
+                }}
+                className={`flex items-center gap-3 bg-slate-800 rounded-lg p-3 ${
+                  item.status === 'playing' ? 'border border-purple-500' : ''
+                } ${dragOverId === item.id ? 'border-t-2 border-t-purple-400' : ''}`}
               >
-                <span className="text-slate-500 w-6 text-center cursor-grab hidden sm:block">
-                  {item.status === 'playing' ? '▶' : '⠿'}
-                </span>
-                <div className="flex flex-col gap-0.5 sm:hidden">
-                  {canUp && (
-                    <button
-                      onClick={() => handleReorder(item.id, pendingItems[0].id)}
-                      className="text-slate-400 hover:text-white p-0.5"
-                      title="置顶"
-                    >
-                      <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M10 17a.75.75 0 01-.75-.75V5.612L5.29 9.77a.75.75 0 01-1.08-1.04l5.25-5.5a.75.75 0 011.08 0l5.25 5.5a.75.75 0 11-1.08 1.04l-3.96-4.158V16.25A.75.75 0 0110 17z" clipRule="evenodd" /></svg>
-                    </button>
-                  )}
-                  {canUp && (
-                    <button
-                      onClick={() => handleReorder(item.id, pendingItems[pendingIdx - 1].id)}
-                      className="text-slate-400 hover:text-white p-0.5"
-                      title="上移"
-                    >
-                      <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M14.77 12.79a.75.75 0 01-1.06-.02L10 8.832 6.29 12.77a.75.75 0 11-1.08-1.04l4.25-4.5a.75.75 0 011.08 0l4.25 4.5a.75.75 0 01-.02 1.06z" clipRule="evenodd" /></svg>
-                    </button>
-                  )}
-                  {canDown && (
-                    <button
-                      onClick={() => handleReorder(item.id, pendingItems[pendingIdx + 1].id)}
-                      className="text-slate-400 hover:text-white p-0.5"
-                      title="下移"
-                    >
-                      <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" /></svg>
-                    </button>
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <span className="font-medium">{item.title}</span>
-                  <span className="text-slate-400"> - {item.artist}</span>
-                  <span className="text-xs text-slate-500 ml-2">({item.userName || '匿名'})</span>
-                </div>
                 {item.status === 'pending' && (
-                  <button
-                    onClick={() => handleSkip(item.id)}
-                    className="text-red-400 hover:text-red-300 text-xs px-2 py-1"
-                  >
-                    删除
-                  </button>
+                  <span className="text-slate-500 text-sm cursor-grab active:cursor-grabbing select-none sm:inline hidden">⠿</span>
+                )}
+                {item.status === 'playing' && (
+                  <span className="text-purple-400 text-sm">▶</span>
+                )}
+                {item.imgUrl ? (
+                  <img src={item.imgUrl} alt="" className="w-8 h-8 rounded object-cover" />
+                ) : (
+                  <div className="w-8 h-8 rounded bg-slate-700 flex items-center justify-center text-slate-500 text-xs">♪</div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="truncate text-sm">{item.title}</div>
+                  <div className="truncate text-xs text-slate-400">{item.artist}</div>
+                </div>
+                {item.userName && (
+                  <span className="text-xs text-slate-500 hidden sm:inline">{item.userName}</span>
+                )}
+                {item.status === 'pending' && (
+                  <>
+                    <div className="flex gap-1 sm:hidden">
+                      <button onClick={() => {
+                        const pending = queue.filter(q => q.status === 'pending');
+                        const firstId = pending[0]?.id;
+                        if (firstId && firstId !== item.id) handleReorder(item.id, firstId);
+                      }} className="px-1.5 py-0.5 bg-slate-700 hover:bg-slate-600 rounded text-xs" title="移到最前">⤒</button>
+                      <button onClick={() => {
+                        const pending = queue.filter(q => q.status === 'pending');
+                        const idx = pending.findIndex(q => q.id === item.id);
+                        if (idx > 0) handleReorder(item.id, pending[idx - 1].id);
+                      }} className="px-1.5 py-0.5 bg-slate-700 hover:bg-slate-600 rounded text-xs" title="上移">↑</button>
+                      <button onClick={() => {
+                        const pending = queue.filter(q => q.status === 'pending');
+                        const idx = pending.findIndex(q => q.id === item.id);
+                        if (idx < pending.length - 1) handleReorder(item.id, pending[idx + 1].id);
+                      }} className="px-1.5 py-0.5 bg-slate-700 hover:bg-slate-600 rounded text-xs" title="下移">↓</button>
+                      <button onClick={() => {
+                        const pending = queue.filter(q => q.status === 'pending');
+                        const lastId = pending[pending.length - 1]?.id;
+                        if (lastId && lastId !== item.id) handleReorder(item.id, lastId);
+                      }} className="px-1.5 py-0.5 bg-slate-700 hover:bg-slate-600 rounded text-xs" title="移到最后">⤓</button>
+                    </div>
+                    <button
+                      onClick={() => handleSkip(item.id)}
+                      className="px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-xs"
+                    >
+                      移除
+                    </button>
+                  </>
                 )}
               </div>
-                );
-              });
-            })()}
-            {queue.filter(q => q.status !== 'done' && q.status !== 'skipped').length === 0 && (
-              <p className="text-slate-500 text-sm">队列为空</p>
-            )}
+            ))}
           </div>
         </div>
       )}
 
       {tab === 'fallback' && (
         <div>
-          <div className="mb-4 space-y-2">
-            {playlists.map((pl) => (
-              <div key={pl.id} className="flex items-center gap-3 bg-slate-800 rounded-lg p-3">
-                <div className="flex-1">
-                  <span className="font-medium text-sm">{pl.name}</span>
-                  <span className="text-xs text-slate-400 ml-2">({pl.songs?.length ?? 0} 首)</span>
-                  {pl.isActive && <span className="text-xs text-green-400 ml-2">● 活跃</span>}
-                </div>
-                {pl.isActive ? (
-                  <button onClick={handleDeactivateFallback} className="text-yellow-400 text-xs px-2 py-1">停用</button>
-                ) : (
-                  <button onClick={() => handleActivateFallback(pl.id)} className="text-green-400 text-xs px-2 py-1">激活</button>
-                )}
-                <button onClick={() => handleDeleteFallback(pl.id)} className="text-red-400 text-xs px-2 py-1">删除</button>
-              </div>
-            ))}
-          </div>
-
-          <div className="border-t border-slate-700 pt-4">
-            <h3 className="font-medium mb-2">从链接导入</h3>
-            <input
-              type="text"
-              placeholder="粘贴歌单链接 (网易云/QQ音乐/酷狗/酷我/咪咕)"
-              value={importUrl}
-              onChange={(e) => { setImportUrl(e.target.value); setImportError(''); }}
-              onKeyDown={(e) => e.key === 'Enter' && handleImportPlaylist()}
-              className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-sm mb-2"
-            />
-            <div className="flex gap-2 mb-2">
-              <label className="flex items-center gap-1 text-sm text-slate-300">
-                <input
-                  type="radio"
-                  name="importMode"
-                  value="fallback"
-                  checked={importMode === 'fallback'}
-                  onChange={() => setImportMode('fallback')}
-                  className="accent-purple-500"
-                />
-                备用歌单
-              </label>
-              <label className="flex items-center gap-1 text-sm text-slate-300">
-                <input
-                  type="radio"
-                  name="importMode"
-                  value="queue"
-                  checked={importMode === 'queue'}
-                  onChange={() => setImportMode('queue')}
-                  className="accent-purple-500"
-                />
-                加入队列
-              </label>
+          {/* Active fallback indicator */}
+          {playlists.some((p: any) => p.active) && (
+            <div className="mb-3 p-2 bg-purple-900/30 border border-purple-700 rounded-lg flex items-center justify-between">
+              <span className="text-sm text-purple-300">
+                当前备用: {playlists.find((p: any) => p.active)?.name}
+              </span>
+              <button
+                onClick={handleDeactivateFallback}
+                className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs"
+              >
+                取消激活
+              </button>
             </div>
-            {importError && (
-              <p className="text-red-400 text-xs mb-2">{importError}</p>
-            )}
-            <button
-              onClick={handleImportPlaylist}
-              disabled={!importUrl.trim() || importing}
-              className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 py-2 rounded-lg text-sm font-medium"
-            >
-              {importing ? '导入中...' : '开始导入'}
-            </button>
+          )}
+
+          {/* Existing playlists */}
+          {playlists.length > 0 && (
+            <div className="mb-4 space-y-1">
+              {playlists.map((pl: any) => (
+                <div key={pl.id} className="flex items-center gap-3 bg-slate-800 rounded-lg p-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate text-sm">{pl.name}</div>
+                    <div className="text-xs text-slate-400">{pl.song_count} 首歌</div>
+                  </div>
+                  {!pl.active && (
+                    <button
+                      onClick={() => handleActivateFallback(pl.id)}
+                      className="px-2 py-1 bg-purple-600 hover:bg-purple-700 rounded text-xs"
+                    >
+                      激活
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleDeleteFallback(pl.id)}
+                    className="px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-xs"
+                  >
+                    删除
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Import from URL */}
+          <div className="mb-4 p-3 bg-slate-800 rounded-lg border border-slate-700">
+            <h3 className="text-sm font-medium mb-2">从链接导入</h3>
+            <div className="flex gap-2 mb-2">
+              <input
+                type="text"
+                placeholder="粘贴歌单链接..."
+                value={importUrl}
+                onChange={(e) => setImportUrl(e.target.value)}
+                className="flex-1 bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm"
+              />
+              <select
+                value={importMode}
+                onChange={(e) => setImportMode(e.target.value as 'fallback' | 'queue')}
+                className="bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm"
+              >
+                <option value="fallback">备用列表</option>
+                <option value="queue">播放队列</option>
+              </select>
+              <button
+                onClick={handleImportPlaylist}
+                disabled={importing}
+                className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 rounded text-sm"
+              >
+                {importing ? '...' : '导入'}
+              </button>
+            </div>
+            {importError && <p className="text-red-400 text-xs">{importError}</p>}
           </div>
 
-          <div className="border-t border-slate-700 pt-4 mt-4">
-            <h3 className="font-medium mb-2">创建备用列表</h3>
+          {/* Create new playlist */}
+          <div className="p-3 bg-slate-800 rounded-lg border border-slate-700">
+            <h3 className="text-sm font-medium mb-2">创建备用列表</h3>
             <input
               type="text"
               placeholder="列表名称"
               value={fbName}
               onChange={(e) => setFbName(e.target.value)}
-              className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-sm mb-2"
+              className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm mb-2"
             />
             <div className="flex gap-2 mb-2">
               <input
                 type="text"
-                placeholder="搜索歌曲添加..."
+                placeholder="搜索添加歌曲..."
                 value={fbQuery}
                 onChange={(e) => setFbQuery(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearchFallback()}
-                className="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-sm"
+                className="flex-1 bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm"
               />
               <button
                 onClick={handleSearchFallback}
                 disabled={searching}
-                className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 px-3 py-2 rounded-lg text-sm"
+                className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 rounded text-sm"
               >
                 {searching ? '...' : '搜索'}
               </button>
             </div>
 
             {fbResults.length > 0 && (
-              <div className="space-y-1 mb-3 max-h-48 overflow-y-auto">
-                {fbResults.slice(0, 10).map((song, i) => (
-                  <div key={`${song.source}-${song.id}-${i}`} className="flex items-center gap-2 bg-slate-800 rounded p-2 text-sm">
-                    <div className="flex-1 truncate">
-                      {song.title} <span className="text-slate-400">- {song.artist}</span>
+              <div className="mb-2 space-y-1 max-h-40 overflow-y-auto">
+                {fbResults.map((song, i) => (
+                  <div key={`${song.source}-${song.id}-${i}`} className="flex items-center gap-2 p-2 hover:bg-slate-700 rounded">
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate text-sm">{song.title}</div>
+                      <div className="truncate text-xs text-slate-400">{song.artist}</div>
                     </div>
-                    <button onClick={() => addSongToFallback(song)} className="text-green-400 text-xs px-2">+</button>
+                    <button
+                      onClick={() => addSongToFallback(song)}
+                      className="px-2 py-0.5 bg-purple-600 hover:bg-purple-700 rounded text-xs"
+                    >
+                      +
+                    </button>
                   </div>
                 ))}
               </div>
             )}
 
             {fbSongs.length > 0 && (
-              <div className="mb-3">
-                <p className="text-xs text-slate-400 mb-1">已选 {fbSongs.length} 首：</p>
-                <div className="space-y-1">
-                  {fbSongs.map((s, i) => (
-                    <div key={i} className="flex items-center gap-2 bg-slate-700 rounded p-2 text-sm">
-                      <span className="flex-1 truncate">{s.title} - {s.artist}</span>
-                      <button onClick={() => removeSongFromFallback(i)} className="text-red-400 text-xs">✕</button>
+              <div className="mb-2 space-y-1">
+                {fbSongs.map((song, i) => (
+                  <div key={`fb-${song.source}-${song.id}-${i}`} className="flex items-center gap-2 p-2 bg-slate-700 rounded">
+                    <span className="text-xs text-slate-500">{i + 1}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate text-sm">{song.title}</div>
+                      <div className="truncate text-xs text-slate-400">{song.artist}</div>
                     </div>
-                  ))}
-                </div>
+                    <button
+                      onClick={() => removeSongFromFallback(i)}
+                      className="px-1.5 py-0.5 bg-red-600 hover:bg-red-700 rounded text-xs"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
 
             <button
-              onClick={handleSaveFallback}
+              onClick={handleCreateFallback}
               disabled={!fbName.trim() || fbSongs.length === 0}
-              className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-50 py-2 rounded-lg text-sm font-medium"
+              className="w-full px-3 py-1.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 rounded text-sm"
             >
-              保存备用列表
+              创建 ({fbSongs.length} 首)
             </button>
           </div>
         </div>
@@ -679,25 +630,21 @@ export default function Admin() {
 
       {tab === 'settings' && (
         <div className="space-y-4">
-          <div className="bg-slate-800 rounded-lg p-4">
-            <h3 className="font-medium mb-2">音源信息</h3>
-            <p className="text-sm text-slate-400">
-              音乐数据由 <a href="https://music.gdstudio.xyz" target="_blank" rel="noopener noreferrer" className="text-purple-400 underline">GD音乐台</a> 聚合 API 提供，
-              当前可用音源：网易云音乐、JOOX。
-            </p>
-            <p className="text-xs text-slate-500 mt-2">
-              数据来源：GD音乐台(music.gdstudio.xyz) — 基于 Meting &amp; MKOnlineMusicPlayer，由 metowolf &amp; mengkun 原创，GD Studio 修改维护。
-            </p>
-            <p className="text-xs text-slate-500 mt-1">
-              本平台仅供学习交流使用，严禁商用。音乐版权归各平台及版权方所有。
-            </p>
-            <p className="text-xs text-slate-500 mt-1">
-              访问限制：5分钟内不超过50次请求
-            </p>
+          <div className="p-3 bg-slate-800 rounded-lg border border-slate-700">
+            <h3 className="text-sm font-medium mb-2">播放模式</h3>
+            <p className="text-xs text-slate-400">队列优先 → 备用列表循环</p>
           </div>
-          <div>
-            <p className="text-sm text-slate-400">管理密码通过环境变量 ADMIN_PASSWORD 设置。</p>
-            <p className="mt-2 text-sm text-slate-400">播放端打开 <code className="bg-slate-800 px-1 rounded">/player</code> 页面即可。</p>
+          <div className="p-3 bg-slate-800 rounded-lg border border-slate-700">
+            <button
+              onClick={() => {
+                sessionStorage.removeItem('admin_password');
+                setLoggedIn(false);
+                setPassword('');
+              }}
+              className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-sm"
+            >
+              退出登录
+            </button>
           </div>
         </div>
       )}

@@ -7,3 +7,4 @@ dist/
 *.sqlite
 .qq-cookie
 .DS_Store
+.sisyphus

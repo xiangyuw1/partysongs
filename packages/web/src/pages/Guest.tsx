@@ -1,21 +1,14 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { searchSongs, addToQueue, getQueue, getLyrics, type Song, type QueueItem } from '../api';
-import { getUserId, getUserName, setUserName, parseLrc, findCurrentLyricLine, type LyricLine } from '../utils';
+import { useState, useEffect, useCallback } from 'react';
+import { searchSongs, addToQueue, getQueue, type Song, type QueueItem } from '../api';
+import { getUserId, getUserName, setUserName } from '../utils';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { usePlaybackSync } from '../hooks/usePlaybackSync';
 
 const SOURCE_OPTIONS = [
   { value: 'all', label: '全部' },
   { value: 'netease', label: '网易云' },
   { value: 'joox', label: 'JOOX' },
 ];
-
-interface PlaybackData {
-  position: number;
-  duration: number;
-  song: Song | null;
-  isPaused: boolean;
-  receivedAt: number;
-}
 
 function formatTime(sec: number): string {
   if (!isFinite(sec) || sec < 0) return '0:00';
@@ -32,43 +25,28 @@ export default function Guest() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [name, setName] = useState(getUserName());
   const [toast, setToast] = useState('');
-  const [playback, setPlayback] = useState<PlaybackData | null>(null);
-  const [lyrics, setLyrics] = useState<LyricLine[]>([]);
-  const progressRef = useRef<HTMLDivElement>(null);
-  const posTextRef = useRef<HTMLSpanElement>(null);
-  const lyricTextRef = useRef<HTMLDivElement>(null);
-  const lastLyricIdxRef = useRef(-2);
-  const rafRef = useRef(0);
+
+  // Shared playback sync — handles interpolation + lyrics
+  const {
+    song: currentSong,
+    position,
+    duration,
+    isPaused,
+    currentLyricText,
+    handleSync,
+  } = usePlaybackSync();
 
   useEffect(() => {
     getQueue().then(setQueue).catch(() => {});
   }, []);
 
-  // Fetch lyrics when song changes
-  useEffect(() => {
-    const song = playback?.song;
-    if (!song) {
-      setLyrics([]);
-      lastLyricIdxRef.current = -2;
-      return;
-    }
-    setLyrics([]);
-    lastLyricIdxRef.current = -2;
-    getLyrics(song.source, song.id, song.title, song.artist).then((data) => {
-      if (data?.lyric) {
-        setLyrics(parseLrc(data.lyric));
-      }
-    }).catch(() => {});
-  }, [playback?.song?.source, playback?.song?.id]);
-
   const handleWs = useCallback((msg: { type: string; data: unknown }) => {
     if (msg.type === 'queue_update') {
       setQueue(msg.data as QueueItem[]);
     } else if (msg.type === 'playback_position') {
-      const d = msg.data as { position: number; duration: number; song: Song | null; isPaused: boolean };
-      setPlayback({ ...d, receivedAt: performance.now() });
+      handleSync(msg.data as { position: number; duration: number; song: Song | null; isPaused: boolean });
     }
-  }, []);
+  }, [handleSync]);
   useWebSocket(handleWs);
 
   function showToast(text: string) {
@@ -97,59 +75,6 @@ export default function Guest() {
       showToast('点歌失败');
     }
   }
-
-  // Animate progress bar between server updates
-  useEffect(() => {
-    cancelAnimationFrame(rafRef.current);
-
-    if (!playback?.song || playback.isPaused) {
-      if (progressRef.current && playback) {
-        const ratio = playback.duration > 0 ? Math.min(playback.position / playback.duration, 1) : 0;
-        progressRef.current.style.width = `${ratio * 100}%`;
-      }
-      if (posTextRef.current && playback) {
-        posTextRef.current.textContent = formatTime(playback.position);
-      }
-      // Update lyric for paused/static position
-      if (playback && lyrics.length > 0) {
-        const idx = findCurrentLyricLine(lyrics, playback.position);
-        if (idx !== lastLyricIdxRef.current) {
-          lastLyricIdxRef.current = idx;
-          if (lyricTextRef.current) {
-            lyricTextRef.current.textContent = idx >= 0 ? lyrics[idx].text : '';
-          }
-        }
-      }
-      return;
-    }
-
-    function tick() {
-      if (!playback?.song || playback.isPaused) return;
-      const elapsed = (performance.now() - playback.receivedAt) / 1000;
-      const pos = Math.min(playback.position + elapsed, playback.duration);
-      const ratio = playback.duration > 0 ? pos / playback.duration : 0;
-      if (progressRef.current) {
-        progressRef.current.style.width = `${ratio * 100}%`;
-      }
-      if (posTextRef.current) {
-        posTextRef.current.textContent = formatTime(pos);
-      }
-      // Update current lyric line
-      if (lyrics.length > 0) {
-        const idx = findCurrentLyricLine(lyrics, pos);
-        if (idx !== lastLyricIdxRef.current) {
-          lastLyricIdxRef.current = idx;
-          if (lyricTextRef.current) {
-            lyricTextRef.current.textContent = idx >= 0 ? lyrics[idx].text : '';
-          }
-        }
-      }
-      rafRef.current = requestAnimationFrame(tick);
-    }
-
-    rafRef.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [playback, lyrics]);
 
   return (
     <div className="max-w-2xl mx-auto p-4">
@@ -195,28 +120,33 @@ export default function Guest() {
         </div>
       </div>
 
-      {playback?.song && (
+      {currentSong && (
         <div className="mb-4 bg-slate-800 rounded-lg p-3 border border-slate-700">
           <div className="flex items-center gap-3 mb-2">
-            {playback.song.imgUrl ? (
-              <img src={playback.song.imgUrl} alt="" className="w-10 h-10 rounded object-cover" />
+            {currentSong.imgUrl ? (
+              <img src={currentSong.imgUrl} alt="" className="w-10 h-10 rounded object-cover" />
             ) : (
               <div className="w-10 h-10 rounded bg-slate-700 flex items-center justify-center text-slate-500">♪</div>
             )}
             <div className="flex-1 min-w-0">
-              <div className="truncate font-medium text-sm">{playback.song.title}</div>
-              <div className="truncate text-xs text-slate-400">{playback.song.artist}</div>
+              <div className="truncate font-medium text-sm">{currentSong.title}</div>
+              <div className="truncate text-xs text-slate-400">{currentSong.artist}</div>
             </div>
-            <span className="text-xs text-slate-500">{playback.isPaused ? '⏸' : '▶'}</span>
+            <span className="text-xs text-slate-500">{isPaused ? '⏸' : '▶'}</span>
           </div>
           <div className="flex items-center gap-2 text-xs text-slate-400">
-            <span ref={posTextRef} className="w-10 text-right tabular-nums">{formatTime(playback.position)}</span>
+            <span className="w-10 text-right tabular-nums">{formatTime(position)}</span>
             <div className="flex-1 h-1 bg-slate-700 rounded-full overflow-hidden">
-              <div ref={progressRef} className="h-full bg-purple-500 rounded-full" style={{ width: `${playback.duration > 0 ? Math.min(playback.position / playback.duration, 1) * 100 : 0}%` }} />
+              <div
+                className="h-full bg-purple-500 rounded-full"
+                style={{ width: `${duration > 0 ? Math.min(position / duration, 1) * 100 : 0}%` }}
+              />
             </div>
-            <span className="w-10 tabular-nums">{formatTime(playback.duration)}</span>
+            <span className="w-10 tabular-nums">{formatTime(duration)}</span>
           </div>
-          <div ref={lyricTextRef} className="mt-2 text-center text-sm text-slate-300 truncate min-h-[1.25rem]" />
+          <div className="mt-2 text-center text-sm text-slate-300 truncate min-h-[1.25rem]">
+            {currentLyricText}
+          </div>
         </div>
       )}
 
@@ -240,10 +170,10 @@ export default function Guest() {
                     {song.artist}{song.album ? ` · ${song.album}` : ''}
                   </div>
                 </div>
-                <span className="text-xs text-slate-500 px-2">{song.source}</span>
+                <span className="text-xs text-slate-500 px-1">{song.source}</span>
                 <button
                   onClick={() => handleRequest(song)}
-                  className="bg-purple-600 hover:bg-purple-700 text-white text-xs px-3 py-1.5 rounded-lg shrink-0"
+                  className="shrink-0 bg-purple-600 hover:bg-purple-700 px-3 py-1 rounded text-sm"
                 >
                   点歌
                 </button>
@@ -254,26 +184,26 @@ export default function Guest() {
       )}
 
       <div>
-        <h3 className="text-sm text-slate-400 mb-2">当前队列 ({queue.filter(q => q.status === 'pending').length} 首)</h3>
-        {queue.length === 0 ? (
-          <p className="text-slate-500 text-sm">还没有人点歌，快来第一首！</p>
+        <h3 className="text-sm text-slate-400 mb-2">当前队列</h3>
+        {queue.filter(q => q.status === 'pending').length === 0 ? (
+          <p className="text-slate-500 text-sm">暂无歌曲，快来点一首吧！</p>
         ) : (
           <div className="space-y-1">
-            {queue.filter(q => q.status !== 'done' && q.status !== 'skipped').map((item, i) => (
-              <div
-                key={item.id}
-                className={`flex items-center gap-3 rounded-lg p-3 text-sm ${
-                  item.status === 'playing' ? 'bg-purple-900/50 border border-purple-600' : 'bg-slate-800'
-                }`}
-              >
-                <span className="text-slate-500 w-6 text-center">
-                  {item.status === 'playing' ? '▶' : i + 1}
-                </span>
+            {queue.filter(q => q.status === 'pending').map((item, i) => (
+              <div key={item.id} className="flex items-center gap-3 bg-slate-800 rounded-lg p-3">
+                <span className="text-slate-500 text-sm w-5 text-right">{i + 1}</span>
+                {item.imgUrl ? (
+                  <img src={item.imgUrl} alt="" className="w-8 h-8 rounded object-cover" />
+                ) : (
+                  <div className="w-8 h-8 rounded bg-slate-700 flex items-center justify-center text-slate-500 text-xs">♪</div>
+                )}
                 <div className="flex-1 min-w-0">
-                  <span className="font-medium">{item.title}</span>
-                  <span className="text-slate-400"> - {item.artist}</span>
+                  <div className="truncate text-sm">{item.title}</div>
+                  <div className="truncate text-xs text-slate-400">{item.artist}</div>
                 </div>
-                <span className="text-xs text-slate-500">{item.userName || '匿名'}</span>
+                {item.userName && (
+                  <span className="text-xs text-slate-500">{item.userName}</span>
+                )}
               </div>
             ))}
           </div>

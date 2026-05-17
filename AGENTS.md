@@ -32,9 +32,10 @@ pnpm workspaces monorepo with two packages:
 - `packages/server/src/routes/admin.ts` — Admin routes (x-admin-password header auth), exports `getNextSong()` used by playback routes, playlist import endpoint, playback timeout detection
 - `packages/server/src/routes/playback.ts` — Player routes: URL resolution, album art proxy, lyrics proxy (all via GD API; lyrics/pic resolve non-GD sources via `resolvePendingSong`), song start notification for timeout detection, playback position broadcast to all clients, `GET /check-ended` for recovery after background suspension
 - `packages/web/src/pages/Player.tsx` — howler.js playback with scrolling lyrics display, auto-requests next song on track end; Wake Lock + Media Session for background/screen-off playback; native Audio `ended` event listener for reliable background advancement; `visibilitychange` recovery with server state check
+- `packages/web/src/hooks/usePlaybackSync.ts` — Shared hook for Guest/Admin playback sync. Receives `playback_position` WebSocket broadcasts, interpolates position locally via `requestAnimationFrame` for smooth progress display, handles lyrics fetching and current-line tracking. Exposes `handleSync()` to feed WS data in, `setOverridePosition()` for admin seeking
 - `packages/web/src/utils.ts` — Shared utilities: user ID/name, admin password storage, LRC lyrics parsing (`parseLrc`), current lyric line lookup (`findCurrentLyricLine`)
-- `packages/web/src/pages/Admin.tsx` — Admin control panel with queue management, fallback playlists, playback controls, playlist import UI, single-line lyrics display below progress bar
-- `packages/web/src/pages/Guest.tsx` — Guest song request page with search, queue display, and read-only playback progress bar with single-line lyrics (receives `playback_position` WebSocket broadcasts, animates smoothly via requestAnimationFrame)
+- `packages/web/src/pages/Admin.tsx` — Admin control panel with queue management, fallback playlists, playback controls, playlist import UI. Uses `usePlaybackSync` for smooth progress bar and lyrics display
+- `packages/web/src/pages/Guest.tsx` — Guest song request page with search, queue display, and read-only playback progress bar with single-line lyrics. Uses `usePlaybackSync` for smooth progress and lyrics
 - `packages/web/src/api.ts` — Frontend API client; `adminFetch()` throws on non-2xx responses with server error message
 
 ### Music source support
@@ -108,7 +109,7 @@ This avoids stale closure issues in the player's `useCallback([], [])` WebSocket
 - `queue_update` — queue state changed
 - `skip` — admin skipped current song, player should advance
 - `playback_state` — volume/mode changes
-- `playback_position` — real-time playback progress: `{ position, duration, song, isPaused }`. Broadcast by server when player reports position (`POST /player/position`, ~1s intervals), on song start (`POST /player/started`), and when queue empties (`POST /player/ended` with `song: null`). Consumed by Guest page for read-only progress bar display.
+- `playback_position` — real-time playback progress: `{ position, duration, song, isPaused }`. Broadcast by server when player reports position (`POST /player/position`, ~1s intervals), on song start (`POST /player/started`), and when queue empties (`POST /player/ended` with `song: null`). Consumed by Guest and Admin pages via `usePlaybackSync` hook, which interpolates position locally via `requestAnimationFrame` for smooth progress display between server updates.
 - `fallback_update` — fallback playlist changes
 - `ping` / `pong` — heartbeat keepalive (client sends ping, server replies pong)
 
