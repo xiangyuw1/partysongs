@@ -7,6 +7,69 @@ import { parseLrc, findCurrentLyricLine, type LyricLine } from '../utils';
 
 const PLAYER_STATE_KEY = 'partysongs_player_state';
 
+// Silent Audio Keep-Alive: Prevent Android Chrome from suspending JS execution when screen is off
+// Android Chrome suspends JS when page is in background, but keeps running if audio is actively playing.
+// By playing a very short silent audio periodically, we keep the page "active" and prevent suspension.
+// This is the same technique used by YouTube Music Web, Spotify Web, etc.
+let silentAudioCtx: AudioContext | null = null;
+let silentAudioSource: AudioBufferSourceNode | null = null;
+let keepAliveInterval: ReturnType<typeof setInterval> | null = null;
+
+function createSilentAudioBuffer(ctx: AudioContext): AudioBuffer {
+  // Create a very short (0.1 seconds) silent audio buffer
+  const sampleRate = ctx.sampleRate;
+  const duration = 0.1;
+  const buffer = ctx.createBuffer(1, sampleRate * duration, sampleRate);
+  // Buffer is initialized with zeros (silence) by default
+  return buffer;
+}
+
+function playSilentPulse() {
+  try {
+    if (!silentAudioCtx || silentAudioCtx.state === 'closed') {
+      silentAudioCtx = new AudioContext();
+    }
+    // Resume suspended context (may happen when page goes to background)
+    if (silentAudioCtx.state === 'suspended') {
+      silentAudioCtx.resume();
+    }
+    // Stop previous source if still playing
+    if (silentAudioSource) {
+      try { silentAudioSource.stop(); } catch { /* already stopped */ }
+    }
+    // Play a silent pulse
+    silentAudioSource = silentAudioCtx.createBufferSource();
+    silentAudioSource.buffer = createSilentAudioBuffer(silentAudioCtx);
+    silentAudioSource.connect(silentAudioCtx.destination);
+    silentAudioSource.start();
+    silentAudioSource.onended = () => { silentAudioSource = null; };
+  } catch (err) {
+    console.warn('[KeepAlive] Silent audio pulse failed:', err);
+  }
+}
+
+function startKeepAlive() {
+  if (keepAliveInterval) return;
+  console.log('[KeepAlive] Starting silent audio keep-alive');
+  // Play silent pulse every 10 seconds to prevent JS suspension
+  keepAliveInterval = setInterval(playSilentPulse, 10000);
+  // Also play immediately to ensure AudioContext is initialized with user gesture context
+  playSilentPulse();
+}
+
+function stopKeepAlive() {
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval);
+    keepAliveInterval = null;
+    console.log('[KeepAlive] Stopped silent audio keep-alive');
+  }
+  if (silentAudioSource) {
+    try { silentAudioSource.stop(); } catch { /* already stopped */ }
+    silentAudioSource = null;
+  }
+  // Don't close AudioContext - reuse it for efficiency
+}
+
 // Wake Lock to prevent screen from sleeping
 let wakeLock: WakeLockSentinel | null = null;
 
@@ -151,9 +214,9 @@ export default function Player() {
           const idx = findCurrentLyricLine(lines, t);
           setActiveLine((prev) => (idx !== prev ? idx : prev));
 
-          // Preload next song when approaching end (10 seconds remaining)
-          // This ensures seamless playback on Android where async requests may fail in background
-          if (!preloadTriggeredRef.current && dur > 0 && (dur - t) < 10) {
+          // Preload next song when approaching end (30 seconds remaining)
+          // Earlier preload gives more time for the async request to complete before potential JS suspension
+          if (!preloadTriggeredRef.current && dur > 0 && (dur - t) < 30) {
             preloadTriggeredRef.current = true;
             console.log('[Player] Preloading next song...');
             requestNext().then((next) => {
@@ -250,6 +313,9 @@ export default function Player() {
       pausedRef.current = false;
       howl.play();
 
+      // Start silent audio keep-alive to prevent Android Chrome from suspending JS
+      startKeepAlive();
+
       // Add direct Audio element listener for reliable background playback
       // The native 'ended' event fires even when JS is throttled in background
       // This bypasses Howler.js callback chain which may break when suspended
@@ -258,11 +324,29 @@ export default function Player() {
         const onNativeEnded = () => {
           console.log('[Player] Native audio ended event fired');
           audioNode.removeEventListener('ended', onNativeEnded);
+          // Clear backup timeout if it exists
+          const backupTimeout = (howl as any).__backupEndTimeout;
+          if (backupTimeout) {
+            clearTimeout(backupTimeout);
+            (howl as any).__backupEndTimeout = null;
+          }
           handleEndedRef.current();
         };
         audioNode.addEventListener('ended', onNativeEnded);
         // Store for cleanup
         (howl as any).__nativeEndedListener = onNativeEnded;
+
+        // Multi-safeguard: Set a backup setTimeout based on song duration
+        // If JS is suspended and native ended event doesn't trigger handleEnded,
+        // this timeout will fire when JS resumes (e.g., when page becomes visible)
+        const dur = howl.duration();
+        if (dur > 0) {
+          const backupTimeout = setTimeout(() => {
+            console.log('[Player] Backup end timeout fired');
+            handleEndedRef.current();
+          }, (dur + 2) * 1000); // Add 2 second buffer
+          (howl as any).__backupEndTimeout = backupTimeout;
+        }
       }
 
       // Update Media Session for background playback
@@ -295,6 +379,7 @@ export default function Player() {
   }
 
   function stopCurrent() {
+    stopKeepAlive();
     cancelAnimationFrame(rafRef.current);
     if (howlRef.current) {
       // Clean up native audio listener if exists
@@ -304,6 +389,11 @@ export default function Player() {
         if (audioNode) {
           audioNode.removeEventListener('ended', listener);
         }
+      }
+      // Clean up backup end timeout if exists
+      const backupTimeout = (howlRef.current as any).__backupEndTimeout;
+      if (backupTimeout) {
+        clearTimeout(backupTimeout);
       }
       howlRef.current.stop();
       howlRef.current.unload();
