@@ -115,6 +115,8 @@ export default function Player() {
   const startedRef = useRef(false);
   const reportPositionRef = useRef<() => void>(() => {});
   const playGenRef = useRef(0);
+  const pendingSeekRef = useRef<number | null>(null);
+  const [bgSuspended, setBgSuspended] = useState(false);
 
   function fetchLyrics(song: Song) {
     setLyrics([]);
@@ -437,8 +439,15 @@ export default function Player() {
       } else if (action === 'seek' && position != null) {
         const howl = howlRef.current;
         if (howl) {
-          howl.seek(position);
-          setCurrentTime(position);
+          // Check if we're in background (Android suspends JS when screen off)
+          if (document.visibilityState === 'hidden') {
+            // Store pending seek - will be applied when page becomes visible
+            pendingSeekRef.current = position;
+            console.log(`[Player] Received seek while in background, storing pending position: ${position}`);
+          } else {
+            howl.seek(position);
+            setCurrentTime(position);
+          }
         }
       } else if (action === 'report_position') {
         reportPositionRef.current();
@@ -482,10 +491,21 @@ export default function Player() {
     async function handleVisibilityChange() {
       if (document.visibilityState === 'visible' && startedRef.current) {
         requestWakeLock();
+        setBgSuspended(false);
+
+        const howl = howlRef.current;
+
+        // Apply any pending seek that was received while in background
+        if (pendingSeekRef.current !== null && howl) {
+          const seekTo = pendingSeekRef.current;
+          pendingSeekRef.current = null;
+          console.log(`[Player] Applying pending seek: ${seekTo}`);
+          howl.seek(seekTo);
+          setCurrentTime(seekTo);
+        }
 
         // If howl is currently playing (e.g., resumed via Media Session lock screen controls),
         // don't trigger handleEnded — the song is already playing.
-        const howl = howlRef.current;
         if (howl && (playingRef.current || howl.playing())) {
           console.log('[Player] Resuming from background, howl is active');
           // Just sync the position to server
@@ -499,22 +519,47 @@ export default function Player() {
           return;
         }
 
-        // Check if song should have ended while we were suspended
+        // Howl is not playing — it may have been suspended by the browser
+        // Try to resume playback
+        if (howl && pausedRef.current) {
+          // Was paused before going to background — leave it paused
+          console.log('[Player] Was paused before background, staying paused');
+          return;
+        }
+
+        if (howl && !playingRef.current) {
+          // Howl exists but not playing — browser may have suspended it
+          console.log('[Player] Howl exists but not playing, attempting resume');
+          try {
+            howl.play();
+            playingRef.current = true;
+            pausedRef.current = false;
+            setPaused(false);
+            setStatus(`正在播放: ${currentSongRef.current?.title ?? ''} - ${currentSongRef.current?.artist ?? ''}`);
+          } catch (e) {
+            console.warn('[Player] Failed to resume playback:', e);
+            setStatus('播放已暂停，请点击播放按钮恢复');
+          }
+          return;
+        }
+
+        // No howl — check if song should have ended
         try {
           const res = await fetch('/api/player/check-ended');
           const data = await res.json();
 
           if (data.shouldAdvance) {
             console.log('[Player] Song should have ended while suspended, requesting next');
-            // Song ended while we were in background - request next
             handleEndedRef.current();
           } else if (data.reason === 'still_playing') {
             console.log(`[Player] Song still playing, ${data.remaining}s remaining`);
-            // Optionally sync the position
           }
         } catch {
-          // Ignore errors - server might be temporarily unavailable
+          // Ignore errors
         }
+      } else if (document.visibilityState === 'hidden') {
+        // Going to background — mark as potentially suspended
+        setBgSuspended(true);
       }
     }
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -677,9 +722,15 @@ export default function Player() {
           </button>
 
           <div className="mt-2 flex items-center gap-2">
-            <span className="inline-block w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+            <span className={`inline-block w-2 h-2 rounded-full ${bgSuspended ? 'bg-amber-400' : 'bg-green-400 animate-pulse'}`} />
             <span className="text-sm text-slate-400">{status}</span>
           </div>
+
+          {bgSuspended && (
+            <p className="mt-2 text-xs text-amber-400/80">
+              息屏后台播放可能受限，如播放暂停请点击播放按钮恢复
+            </p>
+          )}
         </>
       ) : (
         <div className="text-center">

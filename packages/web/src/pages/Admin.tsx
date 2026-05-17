@@ -359,6 +359,11 @@ export default function Admin() {
           <div className="mt-2 text-center text-sm text-slate-300 truncate min-h-[1.25rem]">
             {currentLyricText}
           </div>
+
+          {/* Android background limitation notice */}
+          <p className="mt-2 text-xs text-slate-500 text-center">
+            提示：如播放端息屏，调整进度可能不会立即生效
+          </p>
         </div>
       </div>
 
