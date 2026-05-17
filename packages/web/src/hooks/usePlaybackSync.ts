@@ -142,6 +142,12 @@ export function usePlaybackSync(): UsePlaybackSyncReturn {
       (prevSong && !data.song) ||
       (prevSong && data.song && (prevSong.id !== data.song.id || prevSong.source !== data.song.source));
 
+    // If we received a new position from server, clear any seek override
+    // (Player has acknowledged the seek and is reporting the new position)
+    if (overrideRef.current !== null) {
+      overrideRef.current = null;
+    }
+
     stateRef.current = {
       position: data.position,
       duration: data.duration,

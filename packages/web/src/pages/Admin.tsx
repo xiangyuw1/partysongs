@@ -189,7 +189,8 @@ export default function Admin() {
 
     function handleUp() {
       handleAdminSeek(adminSeekValueRef.current);
-      setOverridePosition(null);
+      // Don't clear override here — it will be cleared automatically
+      // when we receive the next playback_position from the Player
       setAdminSeeking(false);
     }
 

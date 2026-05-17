@@ -104,6 +104,17 @@ This avoids stale closure issues in the player's `useCallback([], [])` WebSocket
 
 `getNextSong()` priority: queue items first (mode `queue_first`), then fallback playlist (cycles with modulo), stops when nothing available.
 
+### Admin seek behavior
+
+Admin progress bar supports drag-to-seek via `setOverridePosition()` from `usePlaybackSync` hook:
+
+1. User drags progress bar → `setOverridePosition(seekTo)` — hook displays override position instead of interpolated position
+2. User releases → `POST /admin/playback { action: 'seek', position }` sent to server → seeking state cleared
+3. **Override is NOT cleared on release** — it stays until the next `playback_position` message arrives from Player
+4. Player processes seek → broadcasts new `playback_position` → hook receives it → automatically clears override → resumes interpolation from new server position
+
+This prevents the "progress bar freezes after seek" bug where override was cleared before Player acknowledged the seek.
+
 ### WebSocket message types
 
 - `queue_update` — queue state changed
