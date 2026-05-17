@@ -115,8 +115,10 @@ export default function Player() {
   const startedRef = useRef(false);
   const reportPositionRef = useRef<() => void>(() => {});
   const playGenRef = useRef(0);
-  const pendingSeekRef = useRef<number | null>(null);
   const [bgSuspended, setBgSuspended] = useState(false);
+  // Preload next song for seamless background advancement
+  const preloadedSongRef = useRef<{ song: Song; queueItemId?: number } | null>(null);
+  const preloadTriggeredRef = useRef(false);
 
   function fetchLyrics(song: Song) {
     setLyrics([]);
@@ -132,17 +134,39 @@ export default function Player() {
 
   function startProgressSync() {
     cancelAnimationFrame(rafRef.current);
+    // Reset preload state for new song
+    preloadedSongRef.current = null;
+    preloadTriggeredRef.current = false;
+
     const tick = () => {
       const howl = howlRef.current;
       if (howl && (playingRef.current || pausedRef.current) && !seekingRef.current) {
         const t = howl.seek() as number;
+        const dur = howl.duration();
         setCurrentTime(t);
-        setDuration(howl.duration());
+        setDuration(dur);
+
         if (playingRef.current) {
           const lines = lyricsRef.current;
           const idx = findCurrentLyricLine(lines, t);
           setActiveLine((prev) => (idx !== prev ? idx : prev));
+
+          // Preload next song when approaching end (10 seconds remaining)
+          // This ensures seamless playback on Android where async requests may fail in background
+          if (!preloadTriggeredRef.current && dur > 0 && (dur - t) < 10) {
+            preloadTriggeredRef.current = true;
+            console.log('[Player] Preloading next song...');
+            requestNext().then((next) => {
+              if (next?.song) {
+                preloadedSongRef.current = next;
+                console.log('[Player] Next song preloaded:', next.song.title);
+              }
+            }).catch((err) => {
+              console.warn('[Player] Preload failed:', err);
+            });
+          }
         }
+
         const now = performance.now();
         if (now - lastSaveRef.current > 1000) {
           lastSaveRef.current = now;
@@ -157,7 +181,7 @@ export default function Player() {
           lastBroadcastRef.current = now;
           sendPlaybackPosition({
             position: t,
-            duration: howl.duration(),
+            duration: dur,
             song: currentSongRef.current,
             isPaused: pausedRef.current,
           });
@@ -322,6 +346,20 @@ export default function Player() {
     stopCurrent();
     updateMediaSession(null); // Clear media session
     try { localStorage.removeItem(PLAYER_STATE_KEY); } catch { /* ignore */ }
+
+    // Use preloaded song if available (seamless background advancement)
+    const preloaded = preloadedSongRef.current;
+    preloadedSongRef.current = null;
+    preloadTriggeredRef.current = false;
+
+    if (preloaded?.song) {
+      console.log('[Player] Using preloaded song:', preloaded.song.title);
+      setStatus(`正在播放: ${preloaded.song.title} - ${preloaded.song.artist}`);
+      playSong(preloaded.song);
+      return;
+    }
+
+    // No preload — request next song (may fail in background)
     setStatus('请求下一首...');
     try {
       const next = await requestNext();
@@ -438,16 +476,10 @@ export default function Player() {
         }
       } else if (action === 'seek' && position != null) {
         const howl = howlRef.current;
-        if (howl) {
-          // Check if we're in background (Android suspends JS when screen off)
-          if (document.visibilityState === 'hidden') {
-            // Store pending seek - will be applied when page becomes visible
-            pendingSeekRef.current = position;
-            console.log(`[Player] Received seek while in background, storing pending position: ${position}`);
-          } else {
-            howl.seek(position);
-            setCurrentTime(position);
-          }
+        if (howl && document.visibilityState === 'visible') {
+          // Only apply seek when visible — ignore while in background
+          howl.seek(position);
+          setCurrentTime(position);
         }
       } else if (action === 'report_position') {
         reportPositionRef.current();
@@ -494,15 +526,6 @@ export default function Player() {
         setBgSuspended(false);
 
         const howl = howlRef.current;
-
-        // Apply any pending seek that was received while in background
-        if (pendingSeekRef.current !== null && howl) {
-          const seekTo = pendingSeekRef.current;
-          pendingSeekRef.current = null;
-          console.log(`[Player] Applying pending seek: ${seekTo}`);
-          howl.seek(seekTo);
-          setCurrentTime(seekTo);
-        }
 
         // If howl is currently playing (e.g., resumed via Media Session lock screen controls),
         // don't trigger handleEnded — the song is already playing.

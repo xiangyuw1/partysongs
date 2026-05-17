@@ -137,11 +137,19 @@ Player page supports Android screen-off usage (e.g. car playback). **Multi-layer
 - Standard callback path, works when JS is active
 - Backup to Layer 1 if native listener fails
 
-**Layer 3: `visibilitychange` + server check** (`Player.tsx`)
+**Layer 3: Preload next song** (`Player.tsx`)
+- When current song reaches 10 seconds remaining, preloads next song via `requestNext()`
+- Preloaded song stored in `preloadedSongRef`
+- On `ended` event, if preload available → plays immediately (no async wait)
+- Critical for Android: async requests may fail in background, preload happens while still playing
+
+**Layer 4: `visibilitychange` + server check** (`Player.tsx`)
 - When page becomes visible after background, calls `GET /api/player/check-ended`
 - Server compares `songStartedAt + songDuration` vs current time
 - If song should have ended, frontend calls `handleEnded()` to advance
 - Handles case where ALL JS was suspended (Android deep sleep)
+- **Auto-resume**: If howl exists but not playing (browser suspended it), attempts `howl.play()`
+- **Pending seek**: Applies any seek commands received while in background
 
 **Layer 4: Server-side timeout detection** (`admin.ts`)
 - Server runs 10-second interval checker
@@ -150,7 +158,7 @@ Player page supports Android screen-off usage (e.g. car playback). **Multi-layer
 
 **Supporting mechanisms:**
 - **Wake Lock API** — prevents auto-sleep; re-acquires on `visibilitychange`
-- **Media Session API** — lock screen controls; `nexttrack` triggers `handleEnded()`
+- **Media Session API** — lock screen controls; uses callbacks (`togglePauseRef`, `handleEndedRef`) to properly update Player state; `nexttrack` triggers `handleEnded()`
 - **WebSocket heartbeat** — 15s ping/pong keeps connection alive
 - **HTTP keepalive** — 25s GET /api/queue prevents request suspension
 
@@ -159,9 +167,17 @@ Player page supports Android screen-off usage (e.g. car playback). **Multi-layer
 - Manual screen lock: Wake Lock released, browser enters background mode
 - HTML5 Audio continues playing (browser treats as media app)
 - Media Session shows controls on lock screen
-- Song end → native `ended` event fires → `handleEnded()` → next song
+- Song end → native `ended` event fires → uses preloaded song → next song plays seamlessly
 - If JS suspended: page visible → check server → advance if needed
 - Admin can still send commands via WebSocket (player processes when visible)
+- **Seek while suspended**: Seek commands are ignored (Player only processes seek when visible)
+
+**Known limitations (Android browser behavior):**
+- Android Chrome suspends JS execution when screen is off — RAF, setTimeout, WebSocket processing all stop
+- `audio.play()` requires direct user gesture — background calls are rejected
+- Media Session API may not work reliably on all Android versions/browsers
+- If playback stops due to background suspension, user must manually tap play to resume
+- UI shows warning: "息屏后台播放可能受限，如播放暂停请点击播放按钮恢复"
 
 ## Branches
 
