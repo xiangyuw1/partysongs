@@ -33,7 +33,11 @@ function releaseWakeLock() {
 }
 
 // Media Session API for background playback support
-function updateMediaSession(song: Song | null, howl?: Howl | null) {
+function updateMediaSession(
+  song: Song | null,
+  howl?: Howl | null,
+  callbacks?: { onPlay?: () => void; onPause?: () => void; onNext?: () => void }
+) {
   if (!('mediaSession' in navigator)) return;
 
   if (!song) {
@@ -49,20 +53,26 @@ function updateMediaSession(song: Song | null, howl?: Howl | null) {
   });
 
   // Action handlers for lock screen / notification controls
+  // Use callbacks to properly update Player state (playingRef, pausedRef, etc.)
   navigator.mediaSession.setActionHandler('play', () => {
-    if (howl && !howl.playing()) {
+    if (callbacks?.onPlay) {
+      callbacks.onPlay();
+    } else if (howl && !howl.playing()) {
       howl.play();
     }
   });
   navigator.mediaSession.setActionHandler('pause', () => {
-    if (howl && howl.playing()) {
+    if (callbacks?.onPause) {
+      callbacks.onPause();
+    } else if (howl && howl.playing()) {
       howl.pause();
     }
   });
   navigator.mediaSession.setActionHandler('previoustrack', null);
   navigator.mediaSession.setActionHandler('nexttrack', () => {
-    // Trigger handleEnded to advance to next song
-    if (typeof (window as any).__playerHandleEnded === 'function') {
+    if (callbacks?.onNext) {
+      callbacks.onNext();
+    } else if (typeof (window as any).__playerHandleEnded === 'function') {
       (window as any).__playerHandleEnded();
     }
   });
@@ -230,7 +240,22 @@ export default function Player() {
       }
 
       // Update Media Session for background playback
-      updateMediaSession(song, howl);
+      // Pass callbacks that properly update Player state (not just howl.play/pause)
+      updateMediaSession(song, howl, {
+        onPlay: () => {
+          if (pausedRef.current) {
+            togglePauseRef.current();
+          }
+        },
+        onPause: () => {
+          if (playingRef.current) {
+            togglePauseRef.current();
+          }
+        },
+        onNext: () => {
+          handleEndedRef.current();
+        },
+      });
       if (seekTo != null && seekTo > 0) {
         howl.seek(seekTo);
       }
@@ -457,6 +482,22 @@ export default function Player() {
     async function handleVisibilityChange() {
       if (document.visibilityState === 'visible' && startedRef.current) {
         requestWakeLock();
+
+        // If howl is currently playing (e.g., resumed via Media Session lock screen controls),
+        // don't trigger handleEnded — the song is already playing.
+        const howl = howlRef.current;
+        if (howl && (playingRef.current || howl.playing())) {
+          console.log('[Player] Resuming from background, howl is active');
+          // Just sync the position to server
+          const t = howl.seek() as number;
+          sendPlaybackPosition({
+            position: t,
+            duration: howl.duration(),
+            song: currentSongRef.current,
+            isPaused: pausedRef.current,
+          });
+          return;
+        }
 
         // Check if song should have ended while we were suspended
         try {
