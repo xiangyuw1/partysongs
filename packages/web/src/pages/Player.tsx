@@ -7,69 +7,6 @@ import { parseLrc, findCurrentLyricLine, type LyricLine } from '../utils';
 
 const PLAYER_STATE_KEY = 'partysongs_player_state';
 
-// Silent Audio Keep-Alive: Prevent Android Chrome from suspending JS execution when screen is off
-// Android Chrome suspends JS when page is in background, but keeps running if audio is actively playing.
-// By playing a very short silent audio periodically, we keep the page "active" and prevent suspension.
-// This is the same technique used by YouTube Music Web, Spotify Web, etc.
-let silentAudioCtx: AudioContext | null = null;
-let silentAudioSource: AudioBufferSourceNode | null = null;
-let keepAliveInterval: ReturnType<typeof setInterval> | null = null;
-
-function createSilentAudioBuffer(ctx: AudioContext): AudioBuffer {
-  // Create a very short (0.1 seconds) silent audio buffer
-  const sampleRate = ctx.sampleRate;
-  const duration = 0.1;
-  const buffer = ctx.createBuffer(1, sampleRate * duration, sampleRate);
-  // Buffer is initialized with zeros (silence) by default
-  return buffer;
-}
-
-function playSilentPulse() {
-  try {
-    if (!silentAudioCtx || silentAudioCtx.state === 'closed') {
-      silentAudioCtx = new AudioContext();
-    }
-    // Resume suspended context (may happen when page goes to background)
-    if (silentAudioCtx.state === 'suspended') {
-      silentAudioCtx.resume();
-    }
-    // Stop previous source if still playing
-    if (silentAudioSource) {
-      try { silentAudioSource.stop(); } catch { /* already stopped */ }
-    }
-    // Play a silent pulse
-    silentAudioSource = silentAudioCtx.createBufferSource();
-    silentAudioSource.buffer = createSilentAudioBuffer(silentAudioCtx);
-    silentAudioSource.connect(silentAudioCtx.destination);
-    silentAudioSource.start();
-    silentAudioSource.onended = () => { silentAudioSource = null; };
-  } catch (err) {
-    console.warn('[KeepAlive] Silent audio pulse failed:', err);
-  }
-}
-
-function startKeepAlive() {
-  if (keepAliveInterval) return;
-  console.log('[KeepAlive] Starting silent audio keep-alive');
-  // Play silent pulse every 10 seconds to prevent JS suspension
-  keepAliveInterval = setInterval(playSilentPulse, 10000);
-  // Also play immediately to ensure AudioContext is initialized with user gesture context
-  playSilentPulse();
-}
-
-function stopKeepAlive() {
-  if (keepAliveInterval) {
-    clearInterval(keepAliveInterval);
-    keepAliveInterval = null;
-    console.log('[KeepAlive] Stopped silent audio keep-alive');
-  }
-  if (silentAudioSource) {
-    try { silentAudioSource.stop(); } catch { /* already stopped */ }
-    silentAudioSource = null;
-  }
-  // Don't close AudioContext - reuse it for efficiency
-}
-
 // Wake Lock to prevent screen from sleeping
 let wakeLock: WakeLockSentinel | null = null;
 
@@ -98,7 +35,6 @@ function releaseWakeLock() {
 // Media Session API for background playback support
 function updateMediaSession(
   song: Song | null,
-  howl?: Howl | null,
   callbacks?: { onPlay?: () => void; onPause?: () => void; onNext?: () => void }
 ) {
   if (!('mediaSession' in navigator)) return;
@@ -116,29 +52,10 @@ function updateMediaSession(
   });
 
   // Action handlers for lock screen / notification controls
-  // Use callbacks to properly update Player state (playingRef, pausedRef, etc.)
-  navigator.mediaSession.setActionHandler('play', () => {
-    if (callbacks?.onPlay) {
-      callbacks.onPlay();
-    } else if (howl && !howl.playing()) {
-      howl.play();
-    }
-  });
-  navigator.mediaSession.setActionHandler('pause', () => {
-    if (callbacks?.onPause) {
-      callbacks.onPause();
-    } else if (howl && howl.playing()) {
-      howl.pause();
-    }
-  });
+  navigator.mediaSession.setActionHandler('play', () => callbacks?.onPlay?.());
+  navigator.mediaSession.setActionHandler('pause', () => callbacks?.onPause?.());
   navigator.mediaSession.setActionHandler('previoustrack', null);
-  navigator.mediaSession.setActionHandler('nexttrack', () => {
-    if (callbacks?.onNext) {
-      callbacks.onNext();
-    } else if (typeof (window as any).__playerHandleEnded === 'function') {
-      (window as any).__playerHandleEnded();
-    }
-  });
+  navigator.mediaSession.setActionHandler('nexttrack', () => callbacks?.onNext?.());
 }
 
 function formatTime(sec: number): string {
@@ -161,7 +78,6 @@ export default function Player() {
   const [paused, setPaused] = useState(false);
   const howlRef = useRef<Howl | null>(null);
   const playingRef = useRef(false);
-  const retryCountRef = useRef(0);
   const lyricsContainerRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number>(0);
   const lyricsRef = useRef<LyricLine[]>([]);
@@ -176,7 +92,6 @@ export default function Player() {
   const lastBroadcastRef = useRef(0);
   const togglePauseRef = useRef<() => void>(() => {});
   const startedRef = useRef(false);
-  const reportPositionRef = useRef<() => void>(() => {});
   const playGenRef = useRef(0);
   const [bgSuspended, setBgSuspended] = useState(false);
   // Preload next song for seamless background advancement
@@ -277,14 +192,12 @@ export default function Player() {
       if (!url) {
         setStatus(`无法播放: ${song.title}，跳过`);
         console.warn('No URL for:', song.title, song.source);
-        retryCountRef.current = 0;
         setTimeout(() => handleEnded(), 2000);
         return;
       }
 
       setCurrentSong(song);
       setStatus(seekTo != null ? `继续播放: ${song.title} - ${song.artist}` : `正在播放: ${song.title} - ${song.artist}`);
-      retryCountRef.current = 0;
 
       const ext = url.split('?')[0].split('.').pop()?.toLowerCase();
       const formats = ext === 'm4a' ? ['m4a', 'mp4'] : ext === 'mp3' ? ['mp3'] : undefined;
@@ -293,7 +206,6 @@ export default function Player() {
         src: [url],
         html5: true,
         ...(formats ? { format: formats } : {}),
-        onend: () => handleEnded(),
         onload: () => {
           // Notify server about song start for timeout detection
           const dur = howl.duration();
@@ -313,45 +225,22 @@ export default function Player() {
       pausedRef.current = false;
       howl.play();
 
-      // Start silent audio keep-alive to prevent Android Chrome from suspending JS
-      startKeepAlive();
-
-      // Add direct Audio element listener for reliable background playback
-      // The native 'ended' event fires even when JS is throttled in background
-      // This bypasses Howler.js callback chain which may break when suspended
+      // Single reliable song-end handler: native Audio 'ended' event
+      // This fires even when JS is throttled in background (Android Chrome)
+      // Bypasses Howler.js callback chain which may break when suspended
       const audioNode = (howl as any)._sounds?.[0]?._node as HTMLAudioElement | undefined;
       if (audioNode) {
         const onNativeEnded = () => {
           console.log('[Player] Native audio ended event fired');
           audioNode.removeEventListener('ended', onNativeEnded);
-          // Clear backup timeout if it exists
-          const backupTimeout = (howl as any).__backupEndTimeout;
-          if (backupTimeout) {
-            clearTimeout(backupTimeout);
-            (howl as any).__backupEndTimeout = null;
-          }
           handleEndedRef.current();
         };
         audioNode.addEventListener('ended', onNativeEnded);
         // Store for cleanup
         (howl as any).__nativeEndedListener = onNativeEnded;
-
-        // Multi-safeguard: Set a backup setTimeout based on song duration
-        // If JS is suspended and native ended event doesn't trigger handleEnded,
-        // this timeout will fire when JS resumes (e.g., when page becomes visible)
-        const dur = howl.duration();
-        if (dur > 0) {
-          const backupTimeout = setTimeout(() => {
-            console.log('[Player] Backup end timeout fired');
-            handleEndedRef.current();
-          }, (dur + 2) * 1000); // Add 2 second buffer
-          (howl as any).__backupEndTimeout = backupTimeout;
-        }
       }
 
-      // Update Media Session for background playback
-      // Pass callbacks that properly update Player state (not just howl.play/pause)
-      updateMediaSession(song, howl, {
+      updateMediaSession(song, {
         onPlay: () => {
           if (pausedRef.current) {
             togglePauseRef.current();
@@ -379,7 +268,6 @@ export default function Player() {
   }
 
   function stopCurrent() {
-    stopKeepAlive();
     cancelAnimationFrame(rafRef.current);
     if (howlRef.current) {
       // Clean up native audio listener if exists
@@ -389,11 +277,6 @@ export default function Player() {
         if (audioNode) {
           audioNode.removeEventListener('ended', listener);
         }
-      }
-      // Clean up backup end timeout if exists
-      const backupTimeout = (howlRef.current as any).__backupEndTimeout;
-      if (backupTimeout) {
-        clearTimeout(backupTimeout);
       }
       howlRef.current.stop();
       howlRef.current.unload();
@@ -449,7 +332,7 @@ export default function Player() {
       return;
     }
 
-    // No preload — request next song (may fail in background)
+    // No preload — request next song from server
     setStatus('请求下一首...');
     try {
       const next = await requestNext();
@@ -460,32 +343,15 @@ export default function Player() {
         setCurrentSong(null);
         sendPlaybackPosition({ position: 0, duration: 0, song: null, isPaused: true });
       }
-    } catch {
-      retryCountRef.current += 1;
-      if (retryCountRef.current > 3) {
-        setStatus('请求失败，请刷新页面');
-        return;
-      }
-      setStatus(`请求失败，${retryCountRef.current}秒后重试...`);
-      setTimeout(() => handleEnded(), retryCountRef.current * 1000);
+    } catch (err) {
+      console.error('[Player] Failed to request next song:', err);
+      setStatus('请求失败，2秒后重试...');
+      setTimeout(() => handleEnded(), 2000);
     }
   }
 
   handleEndedRef.current = handleEnded;
-  // Expose handleEnded for Media Session nexttrack handler
-  (window as any).__playerHandleEnded = handleEnded;
   togglePauseRef.current = togglePause;
-
-  function reportPosition() {
-    const howl = howlRef.current;
-    sendPlaybackPosition({
-      position: howl ? (howl.seek() as number) : 0,
-      duration: howl ? howl.duration() : 0,
-      song: currentSongRef.current,
-      isPaused: pausedRef.current,
-    });
-  }
-  reportPositionRef.current = reportPosition;
 
   useEffect(() => {
     startedRef.current = started;
@@ -536,7 +402,7 @@ export default function Player() {
 
     document.addEventListener('mousemove', handleMove);
     document.addEventListener('mouseup', handleUp);
-    document.addEventListener('touchmove', handleMove, { passive: true });
+    document.addEventListener('touchmove', handleMove);
     document.addEventListener('touchend', handleUp);
     return () => {
       document.removeEventListener('mousemove', handleMove);
@@ -571,8 +437,6 @@ export default function Player() {
           howl.seek(position);
           setCurrentTime(position);
         }
-      } else if (action === 'report_position') {
-        reportPositionRef.current();
       }
     }
   }, []);
@@ -617,11 +481,9 @@ export default function Player() {
 
         const howl = howlRef.current;
 
-        // If howl is currently playing (e.g., resumed via Media Session lock screen controls),
-        // don't trigger handleEnded — the song is already playing.
+        // If howl is currently playing, just sync position to server
         if (howl && (playingRef.current || howl.playing())) {
           console.log('[Player] Resuming from background, howl is active');
-          // Just sync the position to server
           const t = howl.seek() as number;
           sendPlaybackPosition({
             position: t,
@@ -632,16 +494,14 @@ export default function Player() {
           return;
         }
 
-        // Howl is not playing — it may have been suspended by the browser
-        // Try to resume playback
+        // Howl is not playing — check if it was paused before going to background
         if (howl && pausedRef.current) {
-          // Was paused before going to background — leave it paused
           console.log('[Player] Was paused before background, staying paused');
           return;
         }
 
+        // Howl exists but not playing — browser may have suspended it, try to resume
         if (howl && !playingRef.current) {
-          // Howl exists but not playing — browser may have suspended it
           console.log('[Player] Howl exists but not playing, attempting resume');
           try {
             howl.play();
@@ -656,7 +516,7 @@ export default function Player() {
           return;
         }
 
-        // No howl — check if song should have ended
+        // No howl — check if song should have ended while we were suspended
         try {
           const res = await fetch('/api/player/check-ended');
           const data = await res.json();
@@ -705,8 +565,7 @@ export default function Player() {
       startKeepalive();
     }
 
-    // Listen for started state changes via a MutationObserver-like approach
-    // We'll use a simpler polling approach since we have access to startedRef
+    // Listen for started state changes via polling
     const startedCheckInterval = setInterval(() => {
       if (startedRef.current && !keepaliveTimer) {
         startKeepalive();
@@ -855,7 +714,7 @@ export default function Player() {
 
       <div className="fixed bottom-4 right-4 flex flex-col items-center gap-1.5 opacity-60 hover:opacity-100 transition-opacity">
         <div className="bg-white p-2 rounded-lg shadow-lg">
-          <QRCode value={guestUrl} size={80} />
+          <QRCode value={guestUrl} size={60} />
         </div>
         <span className="text-xs text-slate-400">扫码点歌</span>
       </div>

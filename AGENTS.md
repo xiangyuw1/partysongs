@@ -29,9 +29,9 @@ pnpm workspaces monorepo with two packages:
 - `packages/server/src/services/music.ts` — Multi-source search via GD音乐台 API, URL resolution, playlist import via Meting API, lazy song resolution for non-GD sources
 - `packages/server/src/services/queue.ts` — Queue CRUD, fallback playlists, playback state
 - `packages/server/src/services/ws.ts` — WebSocket broadcast to all clients
-- `packages/server/src/routes/admin.ts` — Admin routes (x-admin-password header auth), exports `getNextSong()` used by playback routes, playlist import endpoint, playback timeout detection
+- `packages/server/src/routes/admin.ts` — Admin routes (x-admin-password header auth), exports `getNextSong()` used by playback routes, playlist import endpoint
 - `packages/server/src/routes/playback.ts` — Player routes: URL resolution, album art proxy, lyrics proxy (all via GD API; lyrics/pic resolve non-GD sources via `resolvePendingSong`), song start notification for timeout detection, playback position broadcast to all clients, `GET /check-ended` for recovery after background suspension
-- `packages/web/src/pages/Player.tsx` — howler.js playback with scrolling lyrics display, auto-requests next song on track end; Wake Lock + Media Session for background/screen-off playback; native Audio `ended` event listener for reliable background advancement; `visibilitychange` recovery with server state check
+- `packages/web/src/pages/Player.tsx` — howler.js playback with scrolling lyrics display. Background playback: Wake Lock + Media Session; single native Audio `ended` event for song advancement (fires even when JS suspended); preload next song at 30s remaining; `visibilitychange` recovery via `GET /check-ended`
 - `packages/web/src/hooks/usePlaybackSync.ts` — Shared hook for Guest/Admin playback sync. Receives `playback_position` WebSocket broadcasts, interpolates position locally via `requestAnimationFrame` for smooth progress display, handles lyrics fetching and current-line tracking. Exposes `handleSync()` to feed WS data in, `setOverridePosition()` for admin seeking
 - `packages/web/src/utils.ts` — Shared utilities: user ID/name, admin password storage, LRC lyrics parsing (`parseLrc`), current lyric line lookup (`findCurrentLyricLine`)
 - `packages/web/src/pages/Admin.tsx` — Admin control panel with queue management, fallback playlists, playback controls, playlist import UI. Uses `usePlaybackSync` for smooth progress bar and lyrics display
@@ -126,35 +126,26 @@ This prevents the "progress bar freezes after seek" bug where override was clear
 
 ### Player background playback & screen-off support
 
-Player page supports Android screen-off usage (e.g. car playback). **Multi-layered defense** approach:
+Player page supports Android screen-off usage (e.g. car playback). **Single reliable mechanism** approach:
 
 **Layer 1: Native Audio `ended` event** (`Player.tsx`)
 - Direct listener on HTMLAudioElement, bypasses Howler.js callback chain
 - Native media events fire even when JS is throttled in background
 - Added after `howl.play()` via `howl._sounds[0]._node`
 
-**Layer 2: Howler.js `onend` callback** (`Player.tsx`)
-- Standard callback path, works when JS is active
-- Backup to Layer 1 if native listener fails
-
-**Layer 3: Preload next song** (`Player.tsx`)
-- When current song reaches 10 seconds remaining, preloads next song via `requestNext()`
+**Layer 2: Preload next song** (`Player.tsx`)
+- When current song reaches 30 seconds remaining, preloads next song via `requestNext()`
 - Preloaded song stored in `preloadedSongRef`
 - On `ended` event, if preload available → plays immediately (no async wait)
 - Critical for Android: async requests may fail in background, preload happens while still playing
 
-**Layer 4: `visibilitychange` + server check** (`Player.tsx`)
+**Layer 3: `visibilitychange` + server check** (`Player.tsx`)
 - When page becomes visible after background, calls `GET /api/player/check-ended`
 - Server compares `songStartedAt + songDuration` vs current time
 - If song should have ended, frontend calls `handleEnded()` to advance
 - Handles case where ALL JS was suspended (Android deep sleep)
 - **Auto-resume**: If howl exists but not playing (browser suspended it), attempts `howl.play()`
 - **Pending seek**: Applies any seek commands received while in background
-
-**Layer 4: Server-side timeout detection** (`admin.ts`)
-- Server runs 10-second interval checker
-- If elapsed > duration + 15s buffer, broadcasts `skip` signal
-- Catches cases where player is completely unresponsive
 
 **Supporting mechanisms:**
 - **Wake Lock API** — prevents auto-sleep; re-acquires on `visibilitychange`
