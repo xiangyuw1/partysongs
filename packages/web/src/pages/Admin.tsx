@@ -484,10 +484,10 @@ export default function Admin() {
       {tab === 'fallback' && (
         <div>
           {/* Active fallback indicator */}
-          {playlists.some((p: any) => p.active) && (
+          {playlists.some((p: any) => p.isActive) && (
             <div className="mb-3 p-2 bg-purple-900/30 border border-purple-700 rounded-lg flex items-center justify-between">
               <span className="text-sm text-purple-300">
-                当前备用: {playlists.find((p: any) => p.active)?.name}
+                当前备用: {playlists.find((p: any) => p.isActive)?.name}
               </span>
               <button
                 onClick={handleDeactivateFallback}
@@ -507,7 +507,7 @@ export default function Admin() {
                     <div className="truncate text-sm">{pl.name}</div>
                     <div className="text-xs text-slate-400">{pl.song_count} 首歌</div>
                   </div>
-                  {!pl.active && (
+                  {!pl.isActive && (
                     <button
                       onClick={() => handleActivateFallback(pl.id)}
                       className="px-2 py-1 bg-purple-600 hover:bg-purple-700 rounded text-xs"
