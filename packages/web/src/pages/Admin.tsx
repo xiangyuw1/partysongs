@@ -47,6 +47,7 @@ export default function Admin() {
   // Import from URL
   const [importUrl, setImportUrl] = useState('');
   const [importMode, setImportMode] = useState<'fallback' | 'queue'>('fallback');
+  const [importName, setImportName] = useState('');
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState('');
 
@@ -260,11 +261,16 @@ export default function Admin() {
     setImporting(true);
     setImportError('');
     try {
+      const payload: Record<string, string> = { url: importUrl.trim(), mode: importMode };
+      if (importName.trim()) {
+        payload[importMode === 'fallback' ? 'name' : 'userName'] = importName.trim();
+      }
       await adminFetch('/import-playlist', password, {
         method: 'POST',
-        body: JSON.stringify({ url: importUrl.trim(), mode: importMode }),
+        body: JSON.stringify(payload),
       });
       setImportUrl('');
+      setImportName('');
       loadData();
     } catch (e: any) {
       setImportError(e.message || '导入失败');
@@ -553,6 +559,13 @@ export default function Admin() {
                 {importing ? '...' : '导入'}
               </button>
             </div>
+            <input
+              type="text"
+              placeholder={importMode === 'fallback' ? '列表名称（可选）' : '点歌昵称（可选）'}
+              value={importName}
+              onChange={(e) => setImportName(e.target.value)}
+              className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm mb-2"
+            />
             {importError && <p className="text-red-400 text-xs">{importError}</p>}
           </div>
 

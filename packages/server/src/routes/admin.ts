@@ -47,9 +47,10 @@ router.delete('/fallback/:id', (req, res) => {
 });
 
 router.post('/import-playlist', async (req, res) => {
-  const { url, mode, userId, userName } = req.body as {
+  const { url, mode, name, userId, userName } = req.body as {
     url: string;
     mode: 'fallback' | 'queue';
+    name?: string;
     userId?: string;
     userName?: string;
   };
@@ -68,15 +69,13 @@ router.post('/import-playlist', async (req, res) => {
       const platformNames: Record<string, string> = {
         netease: '网易云', tencent: 'QQ音乐', kugou: '酷狗', kuwo: '酷我', migu: '咪咕',
       };
-      const playlist = q.createFallbackPlaylist(
-        `导入歌单 (${platformNames[parsed.platform] || parsed.platform})`,
-        songs
-      );
+      const playlistName = name?.trim() || `导入歌单 (${platformNames[parsed.platform] || parsed.platform})`;
+      const playlist = q.createFallbackPlaylist(playlistName, songs);
       broadcast({ type: 'fallback_update', data: q.getFallbackPlaylists() });
       res.json({ playlist, count: songs.length, pendingCount });
     } else {
       const uid = userId || 'admin-import';
-      const uname = userName || '管理员导入';
+      const uname = userName?.trim() || '管理员导入';
       const items = songs.map((song) => q.addToQueue(song, uid, uname));
       broadcast({ type: 'queue_update', data: q.getFullQueue() });
       res.json({ queueItems: items, count: items.length, pendingCount });

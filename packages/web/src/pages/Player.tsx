@@ -677,21 +677,32 @@ export default function Player() {
             </div>
           </div>
 
-          <button
-            onClick={togglePause}
-            className="mt-2 mb-2 w-10 h-10 flex items-center justify-center rounded-full bg-slate-800 hover:bg-slate-700 border border-slate-600 transition-colors"
-            title={paused ? '继续播放' : '暂停'}
-          >
-            {paused ? (
-              <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-white ml-0.5">
-                <path d="M8 5v14l11-7z" />
-              </svg>
-            ) : (
+          <div className="mt-2 mb-2 flex items-center gap-3">
+            <button
+              onClick={togglePause}
+              className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-800 hover:bg-slate-700 border border-slate-600 transition-colors"
+              title={paused ? '继续播放' : '暂停'}
+            >
+              {paused ? (
+                <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-white ml-0.5">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-white">
+                  <path d="M6 4h4v16H6zM14 4h4v16h-4z" />
+                </svg>
+              )}
+            </button>
+            <button
+              onClick={() => handleEnded()}
+              className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-800 hover:bg-slate-700 border border-slate-600 transition-colors"
+              title="下一曲"
+            >
               <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-white">
-                <path d="M6 4h4v16H6zM14 4h4v16h-4z" />
+                <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
               </svg>
-            )}
-          </button>
+            </button>
+          </div>
 
           <div className="mt-2 flex items-center gap-2">
             <span className={`inline-block w-2 h-2 rounded-full ${bgSuspended ? 'bg-amber-400' : 'bg-green-400 animate-pulse'}`} />
