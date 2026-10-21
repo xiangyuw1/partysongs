@@ -16,6 +16,7 @@
     "concurrently": "^9.2.1"
   },
   "dependencies": {
+    "partysongs": "link:",
     "react-qr-code": "^2.0.21"
   }
 }

@@ -27,6 +27,7 @@ pnpm workspaces monorepo with two packages:
 ### Key files
 
 - `packages/server/src/services/music.ts` — Multi-source search via GD音乐台 API, URL resolution, playlist import via Meting API, lazy song resolution for non-GD sources
+- `packages/server/src/services/http.ts` — `httpGetText()`: all upstream HTTP requests use `node:http/https`, **not** global `fetch`. Cloudflare's bot protection challenges undici's fingerprint (403 "Just a moment..." page) while plain `node:https` passes — same host, same URL. Reproduced on Node 22 and 24, so it is an undici issue, not a Node version issue. Do not switch these calls back to `fetch`.
 - `packages/server/src/services/queue.ts` — Queue CRUD, fallback playlists, playback state
 - `packages/server/src/services/ws.ts` — WebSocket broadcast to all clients
 - `packages/server/src/routes/admin.ts` — Admin routes (x-admin-password header auth), exports `getNextSong()` used by playback routes, playlist import endpoint

@@ -7,6 +7,7 @@
  */
 import { readFileSync } from 'fs';
 import type { Song, SearchResult, MusicSource } from '../types.js';
+import { httpGetText } from './http.js';
 
 const GD_API = 'https://music-api.gdstudio.xyz/api.php';
 
@@ -41,6 +42,39 @@ function normalizeGdSong(raw: GdSearchItem, source: MusicSource): Song {
   };
 }
 
+/**
+ * Fetch a GD API endpoint and parse its JSON body, logging every failure mode
+ * instead of silently returning "no results".
+ */
+async function gdRequest(params: URLSearchParams, label: string): Promise<unknown> {
+  const url = `${GD_API}?${params}`;
+  let res;
+  try {
+    res = await httpGetText(url, {
+      headers: { 'User-Agent': UA, Accept: 'application/json' },
+    });
+  } catch (err) {
+    console.error(`[Music] GD ${label} request failed:`, err);
+    return null;
+  }
+
+  if (res.status < 200 || res.status >= 300) {
+    const cfRay = res.headers['cf-ray'] ?? '-';
+    console.error(
+      `[Music] GD ${label} HTTP ${res.status} (cf-ray: ${cfRay}):`,
+      res.body.slice(0, 200)
+    );
+    return null;
+  }
+
+  try {
+    return JSON.parse(res.body) as unknown;
+  } catch {
+    console.error(`[Music] GD ${label} returned non-JSON body:`, res.body.slice(0, 200));
+    return null;
+  }
+}
+
 async function searchGdSource(keyword: string, source: MusicSource): Promise<SearchResult> {
   try {
     const params = new URLSearchParams({
@@ -49,10 +83,13 @@ async function searchGdSource(keyword: string, source: MusicSource): Promise<Sea
       name: keyword,
       count: '20',
     });
-    const res = await fetch(`${GD_API}?${params}`, { headers: { 'User-Agent': UA } });
-    if (!res.ok) return { songs: [], total: 0 };
-    const data: GdSearchItem[] = await res.json();
-    const songs = (Array.isArray(data) ? data : []).map((s) => normalizeGdSong(s, source));
+    const data = await gdRequest(params, `search (${source})`);
+    if (data === null) return { songs: [], total: 0 };
+    if (!Array.isArray(data)) {
+      console.error(`[Music] GD search (${source}) unexpected payload:`, JSON.stringify(data).slice(0, 200));
+      return { songs: [], total: 0 };
+    }
+    const songs = (data as GdSearchItem[]).map((s) => normalizeGdSong(s, source));
     return { songs, total: songs.length };
   } catch (err) {
     console.error(`[Music] GD search error (${source}):`, err);
@@ -122,10 +159,12 @@ async function fetchGdUrl(song: Song): Promise<string | null> {
       id: song.id,
       br: '320',
     });
-    const res = await fetch(`${GD_API}?${params}`, { headers: { 'User-Agent': UA } });
-    if (!res.ok) return null;
-    const data: GdUrlItem | GdUrlItem[] = await res.json();
-    const item = Array.isArray(data) ? data[0] : data;
+    const data = await gdRequest(params, `url (${song.source}:${song.id})`);
+    if (data === null) return null;
+    const item = (Array.isArray(data) ? data[0] : data) as GdUrlItem | undefined;
+    if (!item?.url) {
+      console.warn(`[Music] GD url empty for ${song.title} (${song.source}:${song.id}):`, JSON.stringify(data).slice(0, 160));
+    }
     return item?.url || null;
   } catch (err) {
     console.error('[Music] getUrl error for', song.title, song.source, err);
@@ -295,11 +334,24 @@ export async function fetchPlaylist(platform: PlaylistPlatform, id: string): Pro
     server: platform,
     id,
   });
-  const res = await fetch(`${METING_API}/?${params}`, {
-    headers: { 'User-Agent': UA },
+  const res = await httpGetText(`${METING_API}/?${params}`, {
+    headers: { 'User-Agent': UA, Accept: 'application/json' },
+    timeoutMs: 20_000,
   });
-  if (!res.ok) throw new Error(`歌单获取失败 (HTTP ${res.status})`);
-  const data: MetingPlaylistItem[] = await res.json();
+  if (res.status < 200 || res.status >= 300) {
+    console.error(
+      `[Music] Meting playlist HTTP ${res.status} (cf-ray: ${res.headers['cf-ray'] ?? '-'}):`,
+      res.body.slice(0, 200)
+    );
+    throw new Error(`歌单获取失败 (HTTP ${res.status})`);
+  }
+  let data: MetingPlaylistItem[];
+  try {
+    data = JSON.parse(res.body) as MetingPlaylistItem[];
+  } catch {
+    console.error('[Music] Meting playlist returned non-JSON body:', res.body.slice(0, 200));
+    throw new Error('歌单接口返回了非 JSON 内容');
+  }
   if (!Array.isArray(data) || data.length === 0) return [];
 
   const pendingCount = data.filter((item) => {

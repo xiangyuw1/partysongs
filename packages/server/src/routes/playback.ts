@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { getUrl, resolvePendingSong, isGdSupported } from '../services/music.js';
+import { httpGetText } from '../services/http.js';
 import { getNextSong } from './admin.js';
 import * as queue from '../services/queue.js';
 import { broadcast } from '../services/ws.js';
@@ -19,11 +20,20 @@ router.get('/pic/:source/:picId', async (req, res) => {
       picId = resolved.id;
     }
     const apiUrl = `${GD_API}?types=pic&source=${source}&id=${picId}&size=${size}`;
-    const resp = await fetch(apiUrl, {
+    const resp = await httpGetText(apiUrl, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
     });
-    if (!resp.ok) return res.status(502).send('pic api error');
-    const data = await resp.json() as { url?: string };
+    if (resp.status < 200 || resp.status >= 300) {
+      console.error(`[Playback] pic api HTTP ${resp.status} (cf-ray: ${resp.headers['cf-ray'] ?? '-'}):`, resp.body.slice(0, 200));
+      return res.status(502).send('pic api error');
+    }
+    let data: { url?: string };
+    try {
+      data = JSON.parse(resp.body) as { url?: string };
+    } catch {
+      console.error('[Playback] pic api non-JSON body:', resp.body.slice(0, 200));
+      return res.status(502).send('pic api error');
+    }
     if (!data?.url) return res.status(404).send('no pic url');
     return res.redirect(302, data.url);
   } catch (err) {
@@ -42,11 +52,20 @@ router.get('/lyrics', async (req, res) => {
       id = resolved.id;
     }
     const apiUrl = `${GD_API}?types=lyric&source=${source}&id=${id}`;
-    const resp = await fetch(apiUrl, {
+    const resp = await httpGetText(apiUrl, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
     });
-    if (!resp.ok) return res.status(502).json({ error: 'lyric api error' });
-    const data = await resp.json() as { lyric?: string; tlyric?: string };
+    if (resp.status < 200 || resp.status >= 300) {
+      console.error(`[Playback] lyric api HTTP ${resp.status} (cf-ray: ${resp.headers['cf-ray'] ?? '-'}):`, resp.body.slice(0, 200));
+      return res.status(502).json({ error: 'lyric api error' });
+    }
+    let data: { lyric?: string; tlyric?: string };
+    try {
+      data = JSON.parse(resp.body) as { lyric?: string; tlyric?: string };
+    } catch {
+      console.error('[Playback] lyric api non-JSON body:', resp.body.slice(0, 200));
+      return res.status(502).json({ error: 'lyric api error' });
+    }
     res.json({ lyric: data.lyric || '', tlyric: data.tlyric || '' });
   } catch (err) {
     console.error('[Playback] lyrics error:', err);
