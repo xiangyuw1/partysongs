@@ -24,7 +24,7 @@ cp .env.example .env
 npm run dev
 ```
 
-启动后访问：
+启动后浏览器会自动打开放歌页；也可手动访问：
 
 - 点歌页：http://localhost:5173/guest
 - 管理页：http://localhost:5173/admin
@@ -76,7 +76,7 @@ packages/
 ## 常用命令
 
 ```bash
-npm run dev          # 启动全部
+npm run dev          # 启动全部（自动打开放歌页）
 npm run dev:server   # 仅启动后端 (端口 3000)
 npm run dev:web      # 仅启动前端 (端口 5173)
 npm run build        # 构建全部
